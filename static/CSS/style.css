@@ -1,0 +1,196 @@
+.form-container {
+    width: 622px;
+    height: 549px;
+    transform: translate(43%, 22%);
+}
+
+/* Кнопка выпадающего списка */
+.dropbtn {
+  background: #c1c2b542;
+  color: black;
+  border-radius: 10px;
+  padding: 16px;
+  font-size: 12px;
+  border: none;
+}
+
+/* Контейнер <div> - необходим для размещения выпадающего содержимого */
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+/* Выпадающее содержимое (скрыто по умолчанию) */
+.dropdown-content {
+  display: none;
+  position: absolute;
+  background-color: #f1f1f1;
+  min-width: 160px;
+  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  z-index: 1;
+}
+
+/* Ссылки внутри выпадающего списка */
+.dropdown-content a {
+  color: black;
+  padding: 12px 16px;
+  text-decoration: none;
+  display: block;
+}
+
+/* Изменение цвета выпадающих ссылок при наведении курсора */
+.dropdown-content a:hover {background-color: #ddd;}
+
+/* Показать выпадающее меню при наведении курсора */
+.dropdown:hover .dropdown-content {display: block;}
+
+/* Изменение цвета фона кнопки раскрывающегося списка при отображении содержимого раскрывающегося списка */
+.dropdown:hover .dropbtn {background-color: #c1c2b5;}
+
+.background {
+    width: 622px;
+    height: 454px;
+    left: 0px;
+    top: 0px;
+    position: absolute;
+    background: #d1d7dda3;
+    box-shadow: 0px 4px 4px rgba(0, 0, 0, 0.08);
+    border-radius: 25px;
+}
+
+.desc-input{
+    left: 16px;
+    top: 156px;
+    position: absolute;
+    width: 583px;
+    height: 206px;
+    border-radius: 12px;
+    border: 1px rgba(0, 0, 0, 0.74) solid;
+    padding-left: 10px;
+}
+.tags-input{
+    left: 16px;
+    top: 416px;
+    position: absolute;
+    width: 139px;
+    height: 50px;
+    border-radius: 12px;
+    border: 1px rgba(0, 0, 0, 0.74) solid;
+    padding-left: 10px;
+}
+
+.name-input {
+    left: 16px;
+    top: 55px;
+    position: absolute;
+    width: 583px;
+    height: 44px;
+    border-radius:
+    12px; border:
+    1px rgba(0, 0, 0, 0.74) solid;
+    padding-left: 10px;
+}
+.btn {
+    border-radius: 30px;
+    padding: 6px 12px;
+    width: 150px;A
+    height: 50px;
+    background: #f1f1f1;
+}
+.btn:hover{
+    background-color: #b7b7b7;
+}
+
+.btn-save {
+    width: 143px;
+    height: 50px;
+    left: -3px;
+    top: 376px;
+    position: absolute;
+}
+.edit-container {
+    position: fixed;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #f0f0f0;
+    padding: 10px;
+    border-radius: 10px;
+    display: none;
+}
+.btn-save-bg{
+    width: 143px;
+    height: 50px;
+    left: 18px;
+    top: 8px;
+    position: absolute;
+    background: #c1c2b561;
+    border-radius: 44px;
+    cursor: pointer;
+}
+.btn-save-bg:hover{
+    background: #93dd8a61;
+}
+.btn-cansel {
+    width: 143px;
+    height: 50px;
+    position: absolute;
+    left: 175px;
+    top: 385px;
+}
+
+.btn-cansel-bg{
+    width: 143px;
+    height: 50px;
+    position: absolute;
+    background: #c1c2b561;
+    border-radius: 44px;
+    cursor: pointer;
+}
+.btn-cansel-bg:hover{
+    background: #c36b6b61;
+}
+
+}
+.figure{
+    z-index: -1;
+}
+
+.btn-createInterest{
+    z-index: 10;
+    position: fixed;
+    top: 15px;
+    right: 189px;
+    width: 212px;
+    height: 40px;
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    background: #c1c2b542;
+    border-radius: 8px;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 8px;
+    display: inline-flex;
+}
+.btn-createInterest:hover{
+    background: #c1c2b5
+}
+
+.text{
+    font-family: var(--font-family);
+    font-weight: 600;
+    font-size: 22px;
+    color: #17181c;
+    margin: 10px
+}
+
+.rect{
+    border-radius: 16px;
+    width: 616px;
+    height: 154px;
+    background: #fbfbfbc2;
+    margin: 16px;
+    margin-left: 87px;
+}

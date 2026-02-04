@@ -1,0 +1,58 @@
+/* Основные стили чата */
+#chat {
+    max-width: 400px;
+    margin: auto;
+    border: 1px solid #ccc;
+    padding: 10px;
+}
+
+/* Сообщения */
+.message {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+    position: relative;
+}
+
+.message:hover {
+    background-color: #f5f5f5;
+}
+
+/* Время сообщения */
+.timestamp {
+    font-size: 0.8em;
+    color: gray;
+}
+
+/* Кнопки редактирования, удаления, ответа */
+.message-buttons {
+    display: none;
+    position: absolute;
+    right: 10px;
+    top: 5px;
+}
+
+.message:hover .message-buttons {
+    display: inline-block;
+}
+
+button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 16px;
+    margin-left: 5px;
+}
+
+/* Стили для изображений в чате */
+.chat-image {
+    max-width: 250px;
+    max-height: 250px;
+    object-fit: contain;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.2s ease-in-out;
+}
+
+.chat-image:hover {
+    transform: scale(1.05);
+}

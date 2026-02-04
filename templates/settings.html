@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 800px; margin: 40px auto; padding: 20px;">
+    <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 32px;">
+        <h1 style="color: white; text-align: center; margin-bottom: 30px;">Настройки профиля</h1>
+        
+        <div style="display: flex; flex-direction: column; gap: 24px;">
+            <!-- Изменение имени -->
+            <div style="background: #232533; padding: 20px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2);">
+                <label style="color: white; display: block; margin-bottom: 8px; font-weight: bold;">Имя:</label>
+                <input type="text" id="nameInput" value="{{ current_user.name }}" 
+                       style="width: 100%; padding: 10px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px;">
+            </div>
+            
+            <!-- Изменение описания -->
+            <div style="background: #232533; padding: 20px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2);">
+                <label style="color: white; display: block; margin-bottom: 8px; font-weight: bold;">Описание профиля:</label>
+                <textarea id="descriptionInput" rows="4" 
+                          style="width: 100%; padding: 10px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px; resize: vertical;">{{ current_user.information or '' }}</textarea>
+            </div>
+            
+            <!-- Изменение пароля -->
+            <div style="background: #232533; padding: 20px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2);">
+                <label style="color: white; display: block; margin-bottom: 8px; font-weight: bold;">Новый пароль:</label>
+                <input type="password" id="passwordInput" placeholder="Введите новый пароль" 
+                       style="width: 100%; padding: 10px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px; margin-bottom: 8px;">
+                <input type="password" id="passwordConfirmInput" placeholder="Подтвердите пароль" 
+                       style="width: 100%; padding: 10px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px;">
+                <div style="color: #999; font-size: 12px; margin-top: 8px;">Для изменения пароля требуется подтверждение через email</div>
+            </div>
+            
+            <!-- Кнопки -->
+            <div style="display: flex; gap: 12px; justify-content: center;">
+                <button onclick="saveSettings()" 
+                        style="padding: 12px 24px; border: 1px solid white; background: transparent; color: white; cursor: pointer; font-size: 16px; border-radius: 0; transition: all 0.2s;"
+                        onmouseover="this.style.background='white'; this.style.color='#393D54'"
+                        onmouseout="this.style.background='transparent'; this.style.color='white'">
+                    Сохранить
+                </button>
+                <a href="/profile" 
+                   style="padding: 12px 24px; border: 1px solid white; background: transparent; color: white; text-decoration: none; font-size: 16px; border-radius: 0; transition: all 0.2s; display: inline-block;"
+                   onmouseover="this.style.background='white'; this.style.color='#393D54'"
+                   onmouseout="this.style.background='transparent'; this.style.color='white'">
+                    Отмена
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function saveSettings() {
+    const name = document.getElementById('nameInput').value.trim();
+    const description = document.getElementById('descriptionInput').value.trim();
+    const password = document.getElementById('passwordInput').value;
+    const passwordConfirm = document.getElementById('passwordConfirmInput').value;
+    
+    // Валидация пароля
+    if (password) {
+        if (password.length < 6) {
+            alert('Пароль должен быть не менее 6 символов');
+            return;
+        }
+        if (password !== passwordConfirm) {
+            alert('Пароли не совпадают');
+            return;
+        }
+    }
+    
+    const data = {
+        name: name,
+        information: description
+    };
+    
+    if (password) {
+        data.password = password;
+        // Здесь можно добавить запрос кода подтверждения через email
+        // Пока просто сохраняем пароль
+    }
+    
+    try {
+        const response = await fetch('/update_profile', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('Настройки сохранены');
+            if (password) {
+                alert('Пароль изменён. Для полной активации требуется подтверждение через email.');
+            }
+            window.location.href = '/profile';
+        } else {
+            alert(result.message || 'Ошибка при сохранении настроек');
+        }
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('Произошла ошибка. Попробуйте ещё раз.');
+    }
+}
+</script>
+{% endblock %}
+

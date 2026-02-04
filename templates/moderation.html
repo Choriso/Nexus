@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 1400px; margin: 20px auto; padding: 20px;">
+    <h1 style="color: white; text-align: center; margin-bottom: 30px;">Панель модерации</h1>
+    
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <!-- Активные жалобы -->
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px;">
+            <h2 style="color: white; margin-bottom: 20px;">Активные жалобы ({{ reports|length }})</h2>
+            
+            {% for report in reports %}
+            <div style="background: #232533; padding: 16px; border-radius: 12px; margin-bottom: 16px; border: 1px solid rgba(255, 255, 255, 0.2);">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+                    <div>
+                        <div style="color: white; font-weight: bold; margin-bottom: 8px;">
+                            Интерес: <a href="/viewInteres?user_id={{ report.interest.user.id }}&interest_id={{ report.interest.id }}" style="color: #4a90e2;">{{ report.interest.title }}</a>
+                        </div>
+                        <div style="color: #999; font-size: 14px;">
+                            Автор: {{ report.interest.user.name }} | Жалоба от: {{ report.reporter.name }}
+                        </div>
+                    </div>
+                    <div style="color: #999; font-size: 12px;">
+                        {{ report.created_at.strftime('%d.%m.%Y %H:%M') }}
+                    </div>
+                </div>
+                
+                <div style="color: #d1d7dd; margin-bottom: 12px;">
+                    <strong style="color: white;">Причина:</strong> {{ report.reason }}<br>
+                    <strong style="color: white;">Описание:</strong> {{ report.description }}
+                </div>
+                
+                <textarea id="comment-{{ report.id }}" placeholder="Комментарий автору (необязательно)" 
+                          style="width: 100%; padding: 8px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px; margin-bottom: 8px; resize: vertical;"></textarea>
+                
+                <div style="display: flex; gap: 8px;">
+                    <button onclick="reviewReport({{ report.id }}, 'dismiss', '{{ report.id }}')" 
+                            style="padding: 8px 16px; background: #666; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Отклонить
+                    </button>
+                    <button onclick="reviewReport({{ report.id }}, 'warn', '{{ report.id }}')" 
+                            style="padding: 8px 16px; background: #ffa500; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Предупредить
+                    </button>
+                    <button onclick="reviewReport({{ report.id }}, 'delete', '{{ report.id }}')" 
+                            style="padding: 8px 16px; background: #ff6b6b; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Удалить
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+            
+            {% if not reports %}
+            <div style="text-align: center; color: #666; padding: 40px;">
+                Нет активных жалоб
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- История жалоб -->
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px;">
+            <h2 style="color: white; margin-bottom: 20px;">История жалоб</h2>
+            
+            {% for report in all_reports %}
+            <div style="background: #232533; padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid rgba(255, 255, 255, 0.1);">
+                <div style="color: white; font-weight: bold; margin-bottom: 4px;">{{ report.interest.title }}</div>
+                <div style="color: #999; font-size: 12px;">
+                    {{ report.reason }} | Статус: 
+                    <span style="color: {% if report.status == 'resolved' %}#4caf50{% elif report.status == 'dismissed' %}#999{% else %}#ffa500{% endif %};">
+                        {{ report.status }}
+                    </span>
+                </div>
+                {% if report.moderator_comment %}
+                <div style="color: #4a90e2; font-size: 12px; margin-top: 4px;">
+                    Комментарий: {{ report.moderator_comment }}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<script>
+async function reviewReport(reportId, action, commentId) {
+    const comment = document.getElementById('comment-' + commentId).value;
+    
+    if (action === 'delete' && !confirm('Вы уверены, что хотите удалить этот интерес?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/moderation/report/${reportId}/review`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                action: action,
+                moderator_comment: comment
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('Жалоба обработана');
+            location.reload();
+        } else {
+            alert(result.message || 'Ошибка при обработке жалобы');
+        }
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('Произошла ошибка. Попробуйте ещё раз.');
+    }
+}
+</script>
+{% endblock %}
+

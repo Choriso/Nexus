@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .profile-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        justify-content: center;
+        align-items: center;
+    }
+    .avatar-container {
+        width: 229px;
+        height: 229px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+    .avatar {
+        width: 200px;
+        height: 200px;
+        border-radius: 0px;
+    }
+    .user-info, .description-box {
+        background: white;
+        border-radius: 0px;
+        padding: 0px;
+        width: 200px;
+    }
+    .info-box {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #F1F1F1;
+        border-radius: 0px;
+        padding: 5px;
+        margin-bottom: 10px;
+    }
+    .label {
+        font-size: 12px;
+        color: black;
+    }
+    .editable {
+        width: 100px;
+        text-align: center;
+        color: rgba(0, 0, 0, 0.40);
+        font-size: 12px;
+    }
+    .map-container {
+        width: 400px;
+        height: 225px;
+        overflow: hidden;
+    }
+    .interests-title {
+        font-size: 31px;
+        font-weight: bold;
+        text-align: center;
+        margin-top: 20px;
+    }
+    .interest-item {
+        background: #393d54;
+        padding: 16px;
+        margin-top: 20px;
+        margin-left: 50px;
+        margin-right: 50px;
+    }
+    .interest-title {
+        font-weight: bold;
+        color: black;
+    }
+    .interest-description {
+        background: #393d54;
+        padding: 16px;
+        border: 1px solid #E4E5E9;
+        margin-bottom: 10px;
+    }
+    .delete-button {
+        color: #ff9b9b;
+    }
+</style>
+
+<div class="container" style="padding-right: 0px; padding-left: 0px; display: flex; align-items: center; gap: 10px; justify-content: center; align-items: center;">
+    <div class="avatar-container" style="position: relative; cursor: pointer;" onclick="document.getElementById('avatarInput').click()">
+        <img src="{% if current_user.image_path %}{{ url_for('static', filename=current_user.image_path) if not current_user.image_path.startswith('http') else current_user.image_path }}{% else %}{{ url_for('static', filename='images/default-avatar.svg') }}{% endif %}" alt="Avatar" class="avatar" id="avatarImage" onerror="this.src='{{ url_for('static', filename='images/default-avatar.svg') }}'">
+        <input type="file" id="avatarInput" accept="image/*" style="display: none;" onchange="uploadAvatar()">
+        <div style="position: absolute; bottom: 0; right: 0; background: #393D54; border: 2px solid white; padding: 5px; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 16px;">📷</div>
+    </div>
+    <div>
+        <div class="user-info">
+        <div class="info-box">
+            <div class="label">Изменить имя:</div>
+            <div contenteditable id="EditBox_Name" class="editable">{{ current_user.name }}</div>
+        </div>
+
+        </div>
+
+        <div class="description-box">
+            <div class="info-box">
+                <div class="label">Описание</div>
+            <div contenteditable id="EditBox_Description" class="editable">{{ current_user.information }}</div>
+            </div>
+
+        </div>
+    </div>
+
+
+    <div class="location-label" style="rotate: 270deg; white-space: nowrap; display: inline-block;">Местоположение</div>
+    <div id="map" class="map-container"></div>
+</div>
+
+<div style="display: flex; gap: 20px; margin-top: 20px;">
+    <div style="flex: 1;">
+        <div class="interests-title">Мои Интересы</div>
+        {% for item in interest %}
+        <div class="interest-item">
+            <a class="interest-title">{{ item.title }}</a>
+            <div class="interest-description">{{ item.description }}</div>
+            <a href="/interest_delete/{{ item.id }}" class="delete-button"><u>Удалить</u></a>
+        </div>
+        {% endfor %}
+        {% if not interest %}
+        <div style="text-align: center; color: #666; padding: 20px;">У вас пока нет созданных интересов</div>
+        {% endif %}
+    </div>
+    <div style="flex: 1;">
+        <div class="interests-title">Избранное</div>
+        {% for item in favorite_interests %}
+        <div class="interest-item">
+            <a class="interest-title" href="/viewInteres?user_id={{ item.user.id }}&interest_id={{ item.id }}">{{ item.title }}</a>
+            <div class="interest-description">{{ item.description }}</div>
+            <div style="color: #999; font-size: 12px;">Автор: {{ item.user.name }}</div>
+            <button onclick="removeFavorite({{ item.id }})" style="color: #ff9b9b; background: none; border: none; cursor: pointer; text-decoration: underline; margin-top: 8px;">
+                Удалить из избранного
+            </button>
+        </div>
+        {% endfor %}
+        {% if not favorite_interests %}
+        <div style="text-align: center; color: #666; padding: 20px;">У вас пока нет избранных интересов</div>
+        {% endif %}
+    </div>
+</div>
+<div style="text-align: center; margin-top: 20px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+    <a href="/settings" class="btn" style="padding: 10px 20px; border: 1px solid white; background: transparent; color: white; text-decoration: none; display: inline-block;">⚙️ Настройки</a>
+    <a href="/knowledge_graph" class="btn" style="padding: 10px 20px; border: 1px solid white; background: transparent; color: white; text-decoration: none; display: inline-block;">🧠 Граф знаний</a>
+    {% if current_user.is_moderator %}
+    <a href="/moderation" class="btn" style="padding: 10px 20px; border: 1px solid #ff6b6b; background: transparent; color: #ff6b6b; text-decoration: none; display: inline-block;">🛡️ Модерация</a>
+    <a href="/analytics" class="btn" style="padding: 10px 20px; border: 1px solid #4a90e2; background: transparent; color: #4a90e2; text-decoration: none; display: inline-block;">📊 Аналитика</a>
+    {% endif %}
+</div>
+
+<script>
+async function uploadAvatar() {
+    const fileInput = document.getElementById('avatarInput');
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    // Проверка типа файла
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+        alert('Пожалуйста, выберите изображение (JPG, PNG или WEBP)');
+        fileInput.value = '';
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('photo', file);
+
+    const avatarImage = document.getElementById('avatarImage');
+    const originalSrc = avatarImage.src;
+
+    // Показываем превью загружаемого изображения
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        avatarImage.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+
+    try {
+        const response = await fetch('/upload_avatar', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            if (result.success) {
+                // Обновляем изображение с сервера
+                avatarImage.src = result.image_path + '?t=' + new Date().getTime();
+            } else {
+                alert(result.message || 'Ошибка при загрузке изображения');
+                avatarImage.src = originalSrc;
+            }
+        } else {
+            alert('Ошибка при загрузке изображения');
+            avatarImage.src = originalSrc;
+        }
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('Произошла ошибка при загрузке');
+        avatarImage.src = originalSrc;
+    }
+
+    fileInput.value = '';
+}
+
+async function removeFavorite(interestId) {
+    if (!confirm('Удалить этот интерес из избранного?')) return;
+    
+    try {
+        const response = await fetch(`/favorite/${interestId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+        
+        const result = await response.json();
+        
+        if (result.success && !result.is_favorite) {
+            location.reload(); // Перезагружаем страницу для обновления списка
+        } else {
+            alert(result.message || 'Ошибка при удалении из избранного');
+        }
+    } catch (error) {
+        console.error('Ошибка:', error);
+        alert('Произошла ошибка. Попробуйте ещё раз.');
+    }
+}
+</script>
+{% endblock %}

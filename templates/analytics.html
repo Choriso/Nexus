@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 1400px; margin: 20px auto; padding: 20px;">
+    <h1 style="color: white; text-align: center; margin-bottom: 30px;">Аналитика</h1>
+    
+    <!-- Общая статистика -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="color: #999; font-size: 14px; margin-bottom: 8px;">Пользователи</div>
+            <div style="color: white; font-size: 32px; font-weight: bold;">{{ total_users }}</div>
+        </div>
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="color: #999; font-size: 14px; margin-bottom: 8px;">Интересы</div>
+            <div style="color: white; font-size: 32px; font-weight: bold;">{{ total_interests }}</div>
+        </div>
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="color: #999; font-size: 14px; margin-bottom: 8px;">Сообщения</div>
+            <div style="color: white; font-size: 32px; font-weight: bold;">{{ total_messages }}</div>
+        </div>
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="color: #999; font-size: 14px; margin-bottom: 8px;">Чаты</div>
+            <div style="color: white; font-size: 32px; font-weight: bold;">{{ total_chats }}</div>
+        </div>
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="color: #999; font-size: 14px; margin-bottom: 8px;">Избранное</div>
+            <div style="color: white; font-size: 32px; font-weight: bold;">{{ total_favorites }}</div>
+        </div>
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; text-align: center;">
+            <div style="color: #999; font-size: 14px; margin-bottom: 8px;">Жалобы</div>
+            <div style="color: white; font-size: 32px; font-weight: bold;">{{ total_reports }}</div>
+            <div style="color: #ff6b6b; font-size: 14px; margin-top: 4px;">Ожидают: {{ pending_reports }}</div>
+        </div>
+    </div>
+    
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <!-- Топ авторов -->
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px;">
+            <h2 style="color: white; margin-bottom: 20px;">Топ авторов интересов</h2>
+            <table style="width: 100%; color: white; border-collapse: collapse;">
+                <thead>
+                    <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.2);">
+                        <th style="padding: 12px; text-align: left;">Автор</th>
+                        <th style="padding: 12px; text-align: right;">Интересов</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for author in top_authors %}
+                    <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+                        <td style="padding: 12px;">{{ author.name or 'Без имени' }}</td>
+                        <td style="padding: 12px; text-align: right;">{{ author.count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Топ популярных интересов -->
+        <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px;">
+            <h2 style="color: white; margin-bottom: 20px;">Популярные интересы</h2>
+            <table style="width: 100%; color: white; border-collapse: collapse;">
+                <thead>
+                    <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.2);">
+                        <th style="padding: 12px; text-align: left;">Интерес</th>
+                        <th style="padding: 12px; text-align: right;">В избранном</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for interest in top_interests %}
+                    <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+                        <td style="padding: 12px;">{{ interest.title }}</td>
+                        <td style="padding: 12px; text-align: right;">{{ interest.favorites_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Статистика по жалобам -->
+    <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; margin-top: 20px;">
+        <h2 style="color: white; margin-bottom: 20px;">Жалобы по причинам</h2>
+        <table style="width: 100%; color: white; border-collapse: collapse;">
+            <thead>
+                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.2);">
+                    <th style="padding: 12px; text-align: left;">Причина</th>
+                    <th style="padding: 12px; text-align: right;">Количество</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for reason_data in reports_by_reason %}
+                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+                    <td style="padding: 12px;">{{ reason_data.reason or 'Не указано' }}</td>
+                    <td style="padding: 12px; text-align: right;">{{ reason_data.count }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+

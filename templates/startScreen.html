@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>CONNECTIFY</title>
+    <link rel="stylesheet" type="text/css" href="/static/CSS/startScreen.css">
+    <style>
+        /* Скрытие элемента по умолчанию */
+        #registerFrame {
+            display: none;
+        }
+        #signinDialog {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">CONNECTIFY</div>
+
+    <div class="description">
+        платформа для того, чтобы найти людей, которые разделяют ваши интересы. Мы создали это место, чтобы вы могли легко познакомиться с единомышленниками, обсудить увлекательные темы, обменяться идеями и создать сообщества вокруг ваших увлечений
+    </div>
+
+    <div class="content-container">
+        <div class="content-box">
+            Легко общайтесь с людьми, которые вам интересны. Наш чат поддерживает текстовые сообщения, эмодзи и файлы, чтобы ваше общение было комфортным
+            Подберите людей по интересам, увлечениям, профессиональной деятельности или местоположению. Наши умные алгоритмы помогают вам находить идеальных собеседников
+        </div>
+        <div class="content-box" style="justify-content: center">
+            Мы учитываем ваш профиль и предпочтения, чтобы предлагать вам лучших партнеров для общения и сотрудничества
+        </div>
+        <div class="content-box" >
+            <div class="svg-container">
+                <img src="../static/images/file.svg" alt="Руки" class="image-placeholder"
+                    style="z-index: -1; right: 82%; top: 0%; height: 200px;">
+            </div>
+        </div>
+    </div>
+    <div class="button-container">
+        {% if current_user.is_authenticated %}
+        <a href="/intereses">
+            <button class="button" id="startOldButton">Start</button>
+        </a>
+        {% else %}
+        <button class="button" id="startNewButton">Start</button>
+        {% endif %}
+    </div>
+
+    <div class="frame" id="registerFrame">
+    <div class="frame-divider"></div>
+
+    <div class="frame-text register" id="openRegister">Register</div>
+    <div class="frame-text signin" id="openSignIn">Sign in</div>
+
+    <div class="close-button" id="closeFrame">
+        <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2.66663 13.8669L14.3333 2.2002" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
+        </svg>
+        <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2.66671 2.20019L14.3334 13.8669" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
+        </svg>
+    </div>
+    </div>
+
+    <div class="frame" id="signinDialog" >
+        <div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); font-size: 20px; color: white; font-family: `Geist Mono`, monospace;">
+            <h2>Sign in </h2>
+        </div>
+        <span class="frame-text" style="top: 120px; left: 30px;">Email:</span>
+        <input type="email" id="signinEmail" class="v43_38" placeholder="Enter your email" style="position: absolute; top: 150px; left: 30px; width: 350px;" />
+
+        <span class="frame-text" style="top: 210px; left: 30px;">Password:</span>
+        <input type="password" id="signinPassword" class="v43_39" placeholder="Enter your password" style="position: absolute; top: 240px; left: 30px; width: 350px;" />
+
+        <button class="button" id="submitSignin" style="position: absolute; bottom: 50px; left: 30px;">Submit</button>
+
+        <div class="close-button" id="closeSignin">
+            <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M2.66663 13.8669L14.3333 2.2002" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
+            </svg>
+            <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M2.66671 2.20019L14.3334 13.8669" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
+            </svg>
+        </div>
+    </div>
+
+    <div class="frame" id="registerDialog" style="display: none;">
+        <div style="margin-left: 20px;">
+            <h2 class="dialog-title">Register</h2>
+        </div>
+
+        <div class="form-container" style="display: flex; flex-direction: column; gap: 15px; margin: 20px;">
+            <label >Email:</label>
+            <input type="email" id="registerEmail" class="registerEmail" placeholder="Enter your email" />
+
+            <label >Password:</label>
+            <input type="password" id="registerPassword" class="registerPassword" placeholder="Enter your password" />
+
+            <label >Full name:</label>
+            <input type="text" class="registerName" id="registerName" placeholder="Enter your full name" />
+
+            <!-- Чекбокс: Принятие политики -->
+            <label class="checkbox-container">
+                <input type="checkbox" id="acceptPolicy" />
+                <span>Agree with private policy</span>
+            </label>
+
+            <label class="checkbox-container" id="locationCheckbox">
+            <input type="checkbox" id="allowLocation" />
+            <span>Allow access to your location</span>
+            <div id="locationTooltip" class="tooltip" style="display: none; color: grey;">We use your location to improve search accuracy.
+            </div>
+        </label>
+
+        <button class="button" id="submitRegister" style="position: absolute; bottom: 20px; left: 20px;">Submit</button>
+
+        <div class="close-button" id="closeRegister">
+            <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M2.66663 13.8669L14.3333 2.2002" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
+            </svg>
+            <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M2.66671 2.20019L14.3334 13.8669" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
+            </svg>
+        </div>
+    </div>
+<script>
+    document.getElementById("closeFrame").addEventListener("click", () => {
+        document.getElementById("registerFrame").style.display = "none";
+    });
+
+    document.getElementById("startNewButton").addEventListener("click", () => {
+        document.getElementById("registerFrame").style.display = "block";
+    });
+
+    document.getElementById("openSignIn").addEventListener("click", () => {
+        document.getElementById("registerFrame").style.display = "none";
+        document.getElementById("signinDialog").style.display = "block";
+    });
+    
+    document.getElementById("submitRegister").addEventListener("click", async () => {
+        const email = document.getElementById("registerEmail").value;
+        const password = document.getElementById("registerPassword").value;
+        const fullName = document.getElementById("registerName").value;
+        const acceptPolicy = document.getElementById("acceptPolicy").checked ? 1 : 0;
+        const allowLocation = document.getElementById("allowLocation").checked ? 1 : 0;
+
+        const userData = {
+            email,
+            password,
+            fullName,
+            acceptPolicy,
+            allowLocation
+        };
+
+        try {
+            const response = await fetch('/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(userData)
+            });
+            console.log(userData);
+            const result = await response.json();
+            if (result.success) {
+                window.location.href = '/intereses';
+            } else {
+                alert(`Ошибка: ${result.message}`);
+            }
+        } catch (error) {
+            console.error("Ошибка при отправке данных:", error);
+            alert("Произошла ошибка. Попробуйте ещё раз.");
+        }
+    });
+
+
+    document.getElementById("closeSignin").addEventListener("click", () => {
+        document.getElementById("signinDialog").style.display = "none";
+    });
+    
+    
+    document.getElementById("openRegister").addEventListener("click", () => {
+        document.getElementById("registerFrame").style.display = "none";
+        document.getElementById("registerDialog").style.display = "block";
+    });
+    
+    document.getElementById("closeRegister").addEventListener("click", () => {
+        document.getElementById("registerDialog").style.display = "none";
+    });
+    
+    document.getElementById("submitSignin").addEventListener("click", async () => {
+    const email = document.querySelector("#signinEmail").value.trim();
+    const password = document.querySelector("#signinPassword").value.trim();
+
+    if (!email || !password) {
+        alert("Введите email и пароль.");
+        return;
+    }
+
+    try {
+        const response = await fetch('/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert("Вход выполнен успешно!");
+            window.location.href = '/dashboard';
+        } else {
+            alert(`Ошибка: ${result.message}`);
+        }
+    } catch (error) {
+        console.error("Ошибка при отправке данных:", error);
+        alert("Произошла ошибка. Попробуйте ещё раз.");
+    }
+});
+
+
+    const locationCheckbox = document.getElementById("locationCheckbox");
+    const tooltip = document.getElementById("locationTooltip");
+
+    locationCheckbox.addEventListener("mouseenter", (event) => {
+        tooltip.style.display = "block";
+        tooltip.style.left = `${event.clientX}px`;
+        tooltip.style.top = `${event.clientY - 40}px`; // Смещаем чуть выше курсора
+    });
+
+    locationCheckbox.addEventListener("mousemove", (event) => {
+        tooltip.style.left = `${event.clientX}px`;
+        tooltip.style.top = `${event.clientY - 40}px`;
+    });
+
+    locationCheckbox.addEventListener("mouseleave", () => {
+        tooltip.style.display = "none";
+    });
+</script>
+</body>
+</html>

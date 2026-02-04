@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block content %}
+<a href="interest" class="btn-createInterest">
+    <div class="Text" style="width: 188px; text-align: center; color: black; font-size: 14px;">
+        Новый интерес
+    </div>
+</a>
+<div class="background"
+     style="margin-left: -106px; margin-block-end: 11px; padding: 10px; width: min-content; height: min-content; position: relative; justify-content: space-between; align-items: center; display: inline-flex;">
+    <a>
+        <div class="Avatar"
+             style="width: 229px; height: 229px; justify-content: center; align-items: center; display: inline-flex">
+            <img src="{{user.image_path}}" style="width: 200px; height: 200px; border-radius: 100px;"
+                 alt="Avatar">
+        </div>
+    </a>
+    <div style="width: 195px; height: 211px; position: relative; margin-left: 10px;">
+        <div style="width: 188px; height: 41px; left: 0px; top: 0px; position: absolute">
+            <div style="justify-content: space-between; align-items: center; display: inline-flex; width: 188px; height: 41px; left: 0px; top: 0px; position: absolute; background: #F1F1F1; border-radius: 14px">
+                <div class="Text"
+                     style="overflow: hidden; margin-left: 11px; width: 95px; color: black; font-size: 12px; line-height: 24px; word-wrap: break-word">
+                    Изменить имя:
+                </div>
+                <div id="EditBox_Name" class="Text"
+                     style="overflow: hidden; height: 20px; width: 100px; text-align: center; margin: 5px; color: rgba(0, 0, 0, 0.40); font-size: 12px; word-wrap: break-word">
+                    {{user.name}}
+                </div>
+            </div>
+        </div>
+        <div style="top: 52px; position: absolute">
+            <div style="width: 187px; height: 164px; position: relative; background: #F1F1F1; border-radius: 14px; padding: 10px">
+                <div class="Text"
+                     style="width: auto; text-align: center; color: black; font-size: 12px; line-height: 24px; word-wrap: break-word">
+                    Контакты
+                </div>
+                <div id="EditBox_Connection" class="Text"
+                     style="overflow: auto; height: 114px; color: rgba(0, 0, 0, 0.40); font-size: 12px; word-wrap: break-word">
+                    {{user.connection}}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div style="width: 314px; height: 204px; position: relative; margin-left: 10px; padding: 10px">
+        <div style="width: 314px; height: 204px; left: 0px; top: 0px; position: absolute; background: #F1F1F1; border-radius: 14px"></div>
+        <div id="EditBox_Description" class="Text"
+             style="width: -webkit-fill-available; overflow: auto; padding-right: 10px; height: -webkit-fill-available; top: 38px; position: absolute; color: rgba(0, 0, 0, 0.40); font-size: 12px; word-wrap: break-word">
+            {{user.information}}
+        </div>
+        <div class="Text"
+             style="text-align: center; color: black; position: relative; font-size: 12px; line-height: 24px; word-wrap: break-word">
+            Описание
+        </div>
+    </div>
+    <div class="Text"
+         style="margin: -78px; transform: rotateZ(-90deg); position: relative; font-weight: bold; color: black; font-size: 12px; letter-spacing: 6.84px; word-wrap: break-word;">
+        Местоположение
+    </div>
+    <div id="map"
+         style="overflow: hidden; position: relative; border-radius: 16px; width: 400px; height: 225px;">
+    </div>
+</div>
+<div class="Text" style="position: relative; font-size: 31px; font-weight: bold; left: 35%;">Интересы</div>
+{% for item in interest %}
+<div style="overflow: visible; margin-top: 10px; position: relative; background: #d1d7dda3; border-radius: 16px; flex-direction: column; justify-content: flex-start; align-items: flex-start; display: inline-flex; padding: 16px">
+    <div class="interes-main-info"
+         style="overflow: visible; width: 959px; flex-direction: column; justify-content: flex-start; align-items: flex-start; gap: 12px; display: inline-flex">
+        <a style="color: black">
+            <div class="Text" style="font-weight: bold;">
+                {{item.title}}
+            </div>
+            <a/>
+            <div class="Preview"
+                 style="margin-block-end: 16px; overflow: visible; width: 959px; padding: 16px; background: #fbfbfbc2; border-radius: 12px; border: 1px #E4E5E9 solid">
+                <div class="Text" style="max-width: 924px; word-wrap: break-word;">
+                    {{item.description}}
+                </div>
+            </div>
+    </div>
+</div>
+
+{% endfor %}
+<div class="figure">
+    <img src="{{ url_for('static', filename='images/waves.svg') }}" alt="Ваше изображение"
+         style="z-index: -1; transform: rotate(180deg); right: 82%; top: 0%; position: fixed; height: 1041px; width: 1039px;">
+</div>
+<div class="figure">
+    <img src="{{ url_for('static', filename='images/waves.svg') }}" alt="Ваше изображение"
+         style="right: -22%; top: 15%; position: fixed; height: 1041px; width: 1039px; z-index: -1;">
+</div>
+<div class="figure">
+    <img src="{{ url_for('static', filename='images/waves_2.svg') }}" alt="Ваше изображение"
+         style="right: 2%; top: 25%; position: fixed; height: 1041px; width: 1039px; z-index: -1;">
+</div>
+<div class="figure">
+    <img src="{{ url_for('static', filename='images/waves_2.svg') }}" alt="Ваше изображение"
+         style="right: 62%; top: -20%; position: fixed; height: 700px; width: 700x; z-index: -1;">
+</div>
+{% endblock %}

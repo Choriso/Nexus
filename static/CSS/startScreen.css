@@ -1,0 +1,215 @@
+/* global.css */
+.frame {
+    width: 417px;
+    height: 508px;
+    position: absolute;
+    background: #393D54;
+    box-shadow: 23px 22px 4px rgba(0, 0, 0, 0.25);
+    border: 5px solid white;
+}
+
+.frame-divider {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: white;
+    transform: translateX(-50%);
+}
+
+.frame-text {
+    position: absolute;
+    color: white;
+    font-size: 20px;
+    font-family: "Geist Mono", monospace;
+    font-weight: 400;
+    line-height: 14.7px;
+    word-wrap: break-word;
+}
+
+.frame-text.register {
+    left: 58px;
+    top: 247px;
+}
+
+.frame-text.signin {
+    right: 58px;
+    top: 247px;
+}
+
+.close-button {
+    position: absolute;
+    width: 21px;
+    height: 21px;
+    right: 5px;
+    top: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid white;
+    cursor: pointer;
+}
+
+.close-icon {
+    position: absolute;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    background: #393D54;
+    color: white;
+    font-family: GeistMono, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+}
+
+.header {
+    font-size: 8rem;
+    font-weight: bold;
+    text-align: center;
+}
+
+.description {
+    text-align: center;
+    max-width: 800px;
+    margin: 20px 0;
+    line-height: 1.8;
+}
+
+.content-container {
+    display: flex;
+    border: 2px solid white;
+    max-width: 1200px;
+    width: 100%;
+}
+
+.content-box {
+    flex: 1;
+    padding: 20px;
+    border-right: 2px solid white;
+    display: flex;
+    flex-direction: column;
+}
+
+.content-box:last-child {
+    border-right: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.image-placeholder {
+
+}
+
+.button-container {
+    margin-top: 30px;
+}
+
+.button {
+    padding: 10px 30px;
+    border: 1px solid white;
+    background: transparent;
+    color: white;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+.button:hover {
+    background: white;
+    color: #39
+
+.svg-container {
+    width: 100px;
+    height: 100px;
+    overflow: hidden; /* Обрезает содержимое */
+}
+
+.frame {
+    width: 417px;
+    height: 508px;
+    position: absolute;
+    background: #393D54;
+    box-shadow: 23px 22px 4px rgba(0, 0, 0, 0.25);
+    border: 5px solid white;
+    display: none
+}
+
+.frame-divider {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: white;
+    transform: translateX(-50%);
+}
+
+.frame-text {
+    position: absolute;
+    color: white;
+    font-size: 20px;
+    font-family: "Geist Mono", monospace;
+    font-weight: 400;
+    line-height: 14.7px;
+    word-wrap: break-word;
+}
+
+.frame-text.register {
+    left: 58px;
+    top: 247px;
+}
+
+.frame-text.signin {
+    right: 58px;
+    top: 247px;
+}
+
+.close-button {
+    position: absolute;
+    width: 21px;
+    height: 21px;
+    right: 5px;
+    top: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid white;
+    cursor: pointer;
+}
+
+.close-icon {
+    position: absolute;
+}
+
+.checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: "Geist Mono", monospace;
+    color: white;
+    cursor: pointer;
+}
+
+/* Подсказка (изначально скрыта) */
+.tooltip {
+    position: absolute;
+    background-color: rgba(44, 47, 69, 0.95);
+    color: grey;
+    padding: 8px 12px;
+    border-radius: 8px;
+    white-space: nowrap;
+    display: none;
+    z-index: 100;
+}
+
+/* Показываем подсказку при наведении */
+#locationHint:hover .tooltip {
+    visibility: visible;
+}
