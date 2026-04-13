@@ -1,159 +1,194 @@
-class Message {
-    constructor(id, author, content, type = "text", timestamp = new Date().toLocaleTimeString()) {
-        this.id = id;
-        this.author = author;
-        this.content = content;
-        this.type = type;
-        this.timestamp = timestamp;
-    }
+// --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ---
+let chatBoxContainer;
+let chatContainer;
+let messageInput;
+let chatId;
+let replyToId = null;
 
-    render() {
-        let messageElement = document.createElement("div");
-        messageElement.classList.add("message");
-        messageElement.classList.add(this.author === "Вы" ? "sent" : "received");
+// --- ИНИЦИАЛИЗАЦИЯ ---
+document.addEventListener("DOMContentLoaded", () => {
+    // Инициализируем переменные, когда DOM уже готов
+    chatBoxContainer = document.getElementById("chatBox");
+    chatContainer = document.getElementById("chat");
+    messageInput = document.getElementById("messageInput");
 
-        let timeElement = document.createElement("span");
-        timeElement.classList.add("timestamp");
-        timeElement.innerText = this.timestamp;
+    chatId = chatBoxContainer ? chatBoxContainer.dataset.chatId : null;
+    if (chatId === "0") chatId = null;
 
-        let authorElement = document.createElement("strong");
-        authorElement.innerText = this.author + ": ";
+    if (chatId) loadChatMessages(chatId);
 
-        let contentElement = document.createElement("span");
+    // Автообновление
+    setInterval(() => {
+        if (chatId) loadChatMessages(chatId);
+    }, 4000);
+});
 
-        let buttonsContainer = document.createElement("div");
-        buttonsContainer.classList.add("message-buttons");
+// Далее все остальные функции (isUserAtBottom, sendMessage и т.д.) без изменений
 
-        let deleteButton = document.createElement("button");
-        deleteButton.innerText = "🗑";
-        deleteButton.onclick = () => deleteMessage(this.id);
 
-        let replyButton = document.createElement("button");
-        replyButton.innerText = "💬";
-        replyButton.onclick = () => replyMessage(this.content);
+function isUserAtBottom() {
+    const threshold = 150;
+    return (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight) < threshold;
+}
 
-        if (this.type === "text") {
-            contentElement.innerText = this.content;
-            let editButton = document.createElement("button");
-            editButton.innerText = "✏";
-            editButton.onclick = () => editMessage(this.id, this.content);
-            buttonsContainer.append(replyButton, editButton, deleteButton);
-        } else if (this.type === "image") {
-            let img = document.createElement("img");
-            img.src = this.content;
-            img.classList.add("chat-image");
-            img.style.maxWidth = "150px";
-            img.style.cursor = "pointer";
-            contentElement.appendChild(img);
+// Показать блок ответа
+function replyToMessage(id, text) {
+    replyToId = id;
+    const replyBlock = document.getElementById("replyBlock");
+    const replyContent = document.getElementById("replyContent");
 
-            let fileLink = document.createElement("a");
-            fileLink.href = this.content;
-            fileLink.innerText = "📂";
-            fileLink.download = "";
-            buttonsContainer.append(fileLink, replyButton, deleteButton);
-        } else if (this.type === "file") {
-            let fileLink = document.createElement("a");
-            fileLink.href = this.content;
-            fileLink.innerText = "📂" + this.content.split("/").pop();
-            fileLink.download = "";
-            contentElement.appendChild(fileLink);
-            buttonsContainer.append(replyButton, deleteButton);
-        }
-
-        messageElement.append(authorElement, contentElement, timeElement, buttonsContainer);
-        return messageElement;
+    if (replyBlock && replyContent) {
+        replyContent.textContent = text;
+        replyBlock.style.display = "flex";
+        messageInput.focus();
     }
 }
 
-const chatContainer = document.getElementById("chat");
-const chatBox = document.querySelector(".chat-box");
-let chatId = chatBox ? chatBox.getAttribute("data-chat-id") : null;
-
-function replyMessage(content) {
-    let input = document.getElementById("messageInput");
-    input.value = `> ${content}\n`;
-    input.focus();
+// Отмена ответа
+function cancelReply() {
+    replyToId = null;
+    const replyBlock = document.getElementById("replyBlock");
+    if (replyBlock) replyBlock.style.display = "none";
 }
 
-async function editMessage(id, oldContent) {
-    let newContent = prompt("Измените сообщение:", oldContent);
-    if (!newContent || newContent === oldContent) return;
+// --- ОСНОВНЫЕ ФУНКЦИИ ЧАТА ---
 
-    await fetch(`/messages/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: newContent })
-    });
-    loadMessages(chatId);
-}
+async function loadChatMessages(id) {
+    if (!id || !chatContainer) return;
 
-async function deleteMessage(id) {
-    if (!confirm("Удалить сообщение?")) return;
-    await fetch(`/messages/${id}`, { method: "DELETE" });
-    loadMessages(chatId);
-}
-
-async function loadMessages(id) {
-    if (!id) {
-        console.error("Chat ID отсутствует!");
-        return;
-    }
+    const wasAtBottom = isUserAtBottom();
 
     try {
-        let response = await fetch(`/chat/messages/${id}`);
-        if (!response.ok) throw new Error("Ошибка загрузки сообщений");
+        const response = await fetch(`/chat/messages/${id}`);
+        const data = await response.json();
 
-        let data = await response.json();
         chatContainer.innerHTML = "";
-        data.messages.forEach(msg => {
-            let message = new Message(msg.id, msg.sent_by_user ? "Вы" : data.chat_name, msg.text, msg.message_type, msg.timestamp);
-            chatContainer.appendChild(message.render());
+        const messages = data.messages || data;
+
+        if (messages.length === 0) {
+            chatContainer.innerHTML = '<div class="chat-placeholder">Сообщений пока нет</div>';
+        }
+
+        messages.forEach(msg => {
+            const msgDiv = document.createElement("div");
+            msgDiv.className = `message ${msg.sent_by_user ? 'sent' : 'received'}`;
+
+            // Рендер цитаты ответа
+            if (msg.reply_to_id && msg.reply_to_content) {
+                const quoteDiv = document.createElement("div");
+                quoteDiv.className = "reply-quote";
+                quoteDiv.textContent = msg.reply_to_content;
+                msgDiv.appendChild(quoteDiv);
+            }
+
+            // Рендер основного контента
+            if (msg.message_type === 'image') {
+                const img = document.createElement('img');
+                img.src = msg.content;
+                img.onclick = () => window.open(msg.content, '_blank');
+                msgDiv.appendChild(img);
+            } else if (msg.message_type === 'file') {
+                const fileLink = document.createElement("a");
+                fileLink.href = msg.content;
+                fileLink.className = "file-link";
+                fileLink.textContent = "📂 Файл";
+                fileLink.target = "_blank";
+                msgDiv.appendChild(fileLink);
+            } else {
+                const textSpan = document.createElement("span");
+                textSpan.textContent = msg.content || msg.text;
+                msgDiv.appendChild(textSpan);
+            }
+
+            // Кнопка ответа
+            const rBtn = document.createElement("button");
+            rBtn.innerHTML = "↩";
+            rBtn.className = "btn-reply-action"; // добавь стиль в CSS
+            rBtn.onclick = () => replyToMessage(msg.id, msg.content || msg.text);
+            msgDiv.appendChild(rBtn);
+
+            chatContainer.appendChild(msgDiv);
         });
 
-        // Обновляем заголовок чата
-        const chatHeader = document.querySelector(".chat-header");
-        if (chatHeader) chatHeader.textContent = data.chat_name;
+        if (wasAtBottom) {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
     } catch (err) {
-        console.error(err);
+        console.error("Ошибка загрузки:", err);
     }
 }
 
 async function sendMessage() {
-    let input = document.getElementById("messageInput");
-    let content = input.value.trim();
+    const content = messageInput.value.trim();
     if (!content || !chatId) return;
 
-    await fetch("/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, chat_id: chatId, type: "text" })
-    });
+    const body = {
+        content: content,
+        chat_id: parseInt(chatId),
+        type: "text",
+        reply_to_id: replyToId
+    };
 
-    input.value = "";
-    loadMessages(chatId);
-}
-
-async function uploadFile() {
-    let fileInput = document.getElementById("fileInput");
-    let file = fileInput.files[0];
-    if (!file || !chatId) return;
-
-    let formData = new FormData();
-    formData.append("file", file);
-
-    let response = await fetch("/upload", { method: "POST", body: formData });
-    let result = await response.json();
-
-    if (result.file_url) {
-        let type = result.file_url.match(/\.(jpg|jpeg|png|gif)$/i) ? "image" : "file";
-        await fetch("/messages", {
+    try {
+        const res = await fetch("/messages", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: result.file_url, type, chat_id: chatId })
+            body: JSON.stringify(body)
         });
-        loadMessages(chatId);
+        const data = await res.json();
+
+        if (data.status === "ok") {
+            messageInput.value = "";
+            cancelReply();
+            loadChatMessages(chatId);
+        }
+    } catch (err) {
+        console.error("Ошибка отправки:", err);
     }
 }
 
-if (chatId) loadMessages(chatId);
-setInterval(() => loadMessages(chatId), 3000);
+async function uploadFile() {
+    const fileInput = document.getElementById("fileInput");
+    const file = fileInput.files[0];
+    if (!file || !chatId) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+        const response = await fetch("/upload", { method: "POST", body: formData });
+        const result = await response.json();
+
+        if (result.file_url) {
+            const isImg = /\.(jpg|jpeg|png|webp|gif)$/i.test(file.name);
+            await fetch("/messages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    content: result.file_url,
+                    chat_id: parseInt(chatId),
+                    type: isImg ? 'image' : 'file',
+                    reply_to_id: replyToId
+                })
+            });
+            loadChatMessages(chatId);
+            cancelReply();
+        }
+        fileInput.value = "";
+    } catch (err) {
+        console.error("Ошибка загрузки файла:", err);
+    }
+}
+
+function updateSelectedChat(newChatId, element) {
+    chatId = newChatId;
+    document.querySelectorAll(".chat-item-styled").forEach(item => item.classList.remove("active"));
+    if (element) element.classList.add("active");
+
+    const name = element ? element.querySelector('.chat-name').textContent : "Чат";
+    const header = document.getElementById('chatHeaderTitle');
+    if (header) header.textContent = name;
+
+    loadChatMessages(chatId);
+}
+

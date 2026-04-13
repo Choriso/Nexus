@@ -1,119 +1,216 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Интересы</title>
-    <link href="https://fonts.googleapis.com/css?family=Geist+Mono&display=swap" rel="stylesheet">
-    <link href="/static/CSS/interestStyle.css" rel="stylesheet">
-</head>
-<body>
+{% extends "base.html" %}
 
-        <div class="container">
-            <span class="left-item" href="#" >Connectify</span>
-            <div class="center-items">
-                <a class="btn" href="/chat">Чат</a>
-                <a class="btn" href="/profile">Профиль</a>
-                <a class="btn" href="/interest">Создать интерес</a>
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="{{ url_for('static', filename='js/graph_editor.js') }}"></script>
+    <style>
+    #graph-container {
 
+        background: #16161a;
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        position: relative;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        border: 1px solid #242629;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: none;
+    }
+    /* Контейнер боковой панели */
+    .app-main-grid__side {
+        display: flex;
+        flex-direction: column;
+        height: 100%; /* Занимает всю доступную высоту сетки */
+        max-height: 80vh; /* Ограничиваем общую высоту, чтобы не толкало футер */
+        background: #16161a;
+        border-radius: var(--radius-md);
+        border: 1px solid #242629;
+        padding: 15px;
+    }
+
+    /* Заголовок всегда сверху (не скроллится) */
+    .side-panel-header {
+        flex-shrink: 0;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #242629;
+    }
+
+    /* САМОЕ ВАЖНОЕ: Список результатов со скроллом */
+    #resultsList {
+        flex-grow: 1; /* Занимает всё оставшееся место */
+        overflow-y: auto; /* Включает вертикальную прокрутку */
+        padding-right: 8px; /* Место для полосы прокрутки */
+    }
+
+    /* Стилизация полосы прокрутки (делаем её красивой) */
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: #16161a;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #7f5af0; /* Фиолетовый под стиль кнопок */
+        border-radius: 10px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #94a1b2;
+    }
+
+    /* Стиль карточки (чтобы они не слипались) */
+    .match-card {
+        background: #242629;
+        border: 1px solid #444b5a;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+        transition: transform 0.2s;
+    }
+    .match-card:hover {
+        border-color: #7f5af0;
+    }
+
+    .node-circle {
+        stroke: #16161a;
+        stroke-width: 2px;
+        transition: r 0.3s ease;
+    }
+    .node:hover .node-circle {
+        r: 12px; /* Увеличиваем при наведении */
+    }
+    .node-label {
+        fill: #94a1b2;
+        font-size: 13px;
+        pointer-events: none;
+        font-family: 'Inter', system-ui, sans-serif;
+    }
+    .link {
+        stroke: #444b5a;
+        stroke-opacity: 0.4;
+        stroke-width: 1.5px;
+    }
+    .controls {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    /* Кнопки в стиле современного UI */
+
+
+    .btn-ui:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(127, 90, 240, 0.3); }
+
+    .graphCanvas {
+        cursor: grab; /* Показывает "руку" при наведении на пустую область */
+    }
+
+    .graphCanvas:active {
+        cursor: grabbing; /* Показывает сжатый кулак при перетаскивании */
+    }
+
+    .node text {
+        pointer-events: none; /* Текст не перехватывает клики, они проходят сквозь него на узел */
+        user-select: none;
+    }
+</style>
+<div class="app-main-grid graph-layout-active">
+    <section class="app-main-grid__main">
+        <div class="search-container">
+            <form class="search-container__form" onsubmit="event.preventDefault(); smartSearch();">
+                <input type="text" id="smartSearchInput" class="ui-input search-input"
+                       placeholder="Введите запрос или кликните на узел графа...">
+                <button class="btn-primary" type="button" onclick="smartSearch()">Найти</button>
+            </form>
+        </div>
+
+        <div id="graph-wrapper" style="position: relative;">
+            <div id="graph-container">
+                <svg id="graphCanvas" width="100%" height="617"></svg>
+                <div class="controls">
+                    <button class="btn-primary" onclick="addNode()">Создать узел</button>
+                </div>
             </div>
         </div>
-        <div class="search-container">
-                    <input type="text" id="search" class="search-input" placeholder="Введите запрос" style="width: 100%;     height: 40px;">
-                    <button class="btn">Найти</button>
+    </section>
+
+    <aside class="app-main-grid__side" id="matchResultsSide">
+        <div class="side-panel-header">
+            <h3>Подходящие люди</h3>
+            <span id="matchCount" class="badge">0</span>
         </div>
-        <nav class="container_1">
-            <a class="btn" href="/intereses">Все</a>
-            <button class="btn" onclick="alert('Функция в разработке')">Рекомендуется</button>
-            {% if current_user.is_authenticated %}
-            <a class="btn" href="/favorites">Понравившиеся</a>
-            {% else %}
-            <button class="btn" onclick="alert('Войдите, чтобы видеть понравившиеся интересы')">Понравившиеся</button>
-            {% endif %}
-        </nav>
-        <div style="max-width: 1200px; margin: 20px auto; padding: 0 20px;">
-        {% for item in interest %}
-                <div class="interest-card" style="margin-top: 20px; background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 16px; transition: transform 0.2s, box-shadow 0.2s;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 16px rgba(0,0,0,0.3)'" onmouseout="this.style.transform=''; this.style.boxShadow=''">
-                    <div class="interest-header" style="display: flex; align-items: center; gap: 16px;">
-                        <a href="/viewProfile?user_id={{ item.user.id }}" style="text-decoration: none; display: flex; align-items: center; gap: 12px;">
-                            <img src="{% if item.user.image_path %}{{ url_for('static', filename=item.user.image_path) if not item.user.image_path.startswith('http') else item.user.image_path }}{% else %}{{ url_for('static', filename='images/default-avatar.svg') }}{% endif %}" 
-                                 alt="{{ item.user.name }}" 
-                                 style="width: 50px; height: 50px; border-radius: 50%; border: 2px solid white; object-fit: cover; background: #232533;"
-                                 onerror="this.src='{{ url_for('static', filename='images/default-avatar.svg') }}'">
-                            <div class="Text" style="font-weight: bold; font-size: 20px; color: white;">
-                                {{item.user.name}} - {{item.title}}
-                            </div>
-                        </a>
-                    </div>
-                    <div class="Preview"
-                         style="padding: 16px; background: #232533; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2);">
-                        <div class="Text" style="color: #d1d7dd; word-wrap: break-word; line-height: 1.6;">
-                            {{item.description}}
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 12px; align-items: center; justify-content: space-between;">
-                        <a href="/viewInteres?user_id={{ item.user.id }}&interest_id={{ item.id }}" style="text-decoration: none;">
-                            <div class="btn" style="padding: 10px 20px; border: 1px solid white; background: transparent; color: white; cursor: pointer; border-radius: 0; transition: all 0.2s;" onmouseover="this.style.background='white'; this.style.color='#393D54'" onmouseout="this.style.background='transparent'; this.style.color='white'">
-                                <div class="Text">
-                                    Посмотреть
-                                </div>
-                            </div>
-                        </a>
-                        {% if current_user.is_authenticated %}
-                        <button id="favorite-btn-{{ item.id }}" 
-                                class="favorite-btn" 
-                                onclick="toggleFavorite({{ item.id }})"
-                                style="padding: 10px 20px; border: 1px solid white; background: {% if favorite_ids and item.id in favorite_ids %}#ff6b6b{% else %}transparent{% endif %}; color: white; cursor: pointer; border-radius: 0; transition: all 0.2s; font-size: 20px;"
-                                onmouseover="if(!this.classList.contains('favorited')) this.style.background='rgba(255,107,107,0.5)'" 
-                                onmouseout="if(!this.classList.contains('favorited')) this.style.background='transparent'">
-                            {% if favorite_ids and item.id in favorite_ids %}❤️{% else %}🤍{% endif %}
-                        </button>
-                        {% endif %}
-                    </div>
-                </div>
-        {% endfor %}
+        <div id="resultsList" class="custom-scrollbar">
+            <div class="placeholder-text">Нажмите на узел графа, чтобы найти единомышленников</div>
         </div>
+    </aside>
+</div>
+
+<div id="nodeModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; align-items: center; justify-content: center;">
+    <div style="background: #242629; padding: 20px; border-radius: 12px; width: 400px; border: 1px solid #7f5af0;">
+        <h2 style="color: white;">Новый узел</h2>
+        <input type="text" id="nodeTitle" placeholder="Название" class="ui-input" style="width: 100%; margin-bottom: 10px;">
+        <textarea id="nodeDescription" placeholder="Описание" class="ui-input" style="width: 100%; margin-bottom: 10px;"></textarea>
+        <select id="nodeCategory" class="ui-input" style="width: 100%; margin-bottom: 20px;">
+            <option value="hobby">Хобби</option>
+            <option value="work">Работа</option>
+            <option value="want">Цель</option>
+        </select>
+        <div style="display: flex; gap: 10px;">
+            <button onclick="saveNode()" class="btn-primary" style="flex: 1;">Сохранить</button>
+            <button onclick="document.getElementById('nodeModal').style.display='none'" class="btn-primary" style="background: #666;">Отмена</button>
+        </div>
+    </div>
+</div>
 
 <script>
-async function toggleFavorite(interestId) {
-    const button = document.getElementById(`favorite-btn-${interestId}`);
-    if (!button) return;
-    
-    button.disabled = true;
-    const originalContent = button.innerHTML;
-    
-    try {
-        const response = await fetch(`/favorite/${interestId}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+// Добавь эту функцию в index.html, чтобы сохранение работало
+async function saveNode() {
+    const title = document.getElementById('nodeTitle').value;
+    const response = await fetch('/knowledge_graph/node', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            title: title,
+            description: document.getElementById('nodeDescription').value,
+            category: document.getElementById('nodeCategory').value,
+            x: 0, y: 0
+        })
+    });
+    if (response.ok) location.reload();
+}
+window.addEventListener('load', () => {
+    // Загружаем данные графа через твой текущий роут
+    fetch('/knowledge_graph_data') // Создадим этот легкий эндпоинт ниже
+        .then(res => res.json())
+        .then(data => {
+            initGraph(data.nodes, data.connections);
         });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-            if (result.is_favorite) {
-                button.innerHTML = '❤️';
-                button.classList.add('favorited');
-                button.style.background = '#ff6b6b';
-            } else {
-                button.innerHTML = '🤍';
-                button.classList.remove('favorited');
-                button.style.background = 'transparent';
-            }
-        } else {
-            alert(result.message || 'Ошибка при изменении избранного');
-            button.innerHTML = originalContent;
-        }
-    } catch (error) {
-        console.error('Ошибка:', error);
-        alert('Произошла ошибка. Попробуйте ещё раз.');
-        button.innerHTML = originalContent;
-    } finally {
-        button.disabled = false;
-    }
+});
+
+async function smartSearch() {
+    const q = document.getElementById('smartSearchInput').value;
+    // Логика: если поиск по тексту, подсвечиваем узлы или ищем людей
+    const response = await fetch(`/search_api?q=${encodeURIComponent(q)}`);
+    const results = await response.json();
+    renderMatches(results);
+}
+
+function renderMatches(matches) {
+    const list = document.getElementById('resultsList');
+    list.innerHTML = matches.map(m => `
+        <div class="match-card">
+            <div class="match-score">${m.compatibility}%</div>
+            <div class="match-info">
+                <div class="match-name">${m.user_name}</div>
+                <div class="match-reason">${m.node_title} (${m.category})</div>
+            </div>
+            <button class="btn-primary" onclick="location.href='/viewProfile?user_id=${m.user_id}'">Профиль</button>
+        </div>
+    `).join('');
+    document.getElementById('matchCount').innerText = matches.length;
 }
 </script>
-</body>
-</html>
+{% endblock %}

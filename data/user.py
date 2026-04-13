@@ -29,6 +29,7 @@ class User(SqlAlchemyBase, UserMixin):
 
     interests = orm.relationship("Interest", back_populates='user')
     messages = orm.relationship("Message", back_populates="author")
+
     
     # Избранные интересы через промежуточную таблицу
     favorite_interests = orm.relationship(

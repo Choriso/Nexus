@@ -1,99 +1,220 @@
 {% extends "base.html" %}
 
 {% block content %}
-<a href="interest" class="btn-createInterest">
-    <div class="Text" style="width: 188px; text-align: center; color: black; font-size: 14px;">
-        Новый интерес
-    </div>
-</a>
-<div class="background"
-     style="margin-left: -106px; margin-block-end: 11px; padding: 10px; width: min-content; height: min-content; position: relative; justify-content: space-between; align-items: center; display: inline-flex;">
-    <a>
-        <div class="Avatar"
-             style="width: 229px; height: 229px; justify-content: center; align-items: center; display: inline-flex">
-            <img src="{{user.image_path}}" style="width: 200px; height: 200px; border-radius: 100px;"
-                 alt="Avatar">
+<div class="app-main-grid app-main-grid--stack">
+    <section class="profile-container">
+
+        <div class="profile-header-card">
+            <div class="avatar-wrapper no-edit">
+                <img src="{% if user.image_path %}{{ url_for('static', filename=user.image_path) if not user.image_path.startswith('http') else user.image_path }}{% else %}{{ url_for('static', filename='images/default-avatar.svg') }}{% endif %}"
+                     alt="Avatar" class="avatar-img avatar-img--profile"
+                     onerror="this.src='{{ url_for('static', filename='images/default-avatar.svg') }}'">
+            </div>
+
+            <div class="profile-info-main">
+                <div class="info-group">
+                    <label class="label-muted">Пользователь</label>
+                    <h1 class="display-name">{{ user.name }}</h1>
+                </div>
+
+                <div class="info-group">
+                    <label class="label-muted">О себе</label>
+                    <p class="static-bio">
+                        {{ user.information or "Пользователь пока не добавил описание." }}
+                    </p>
+                </div>
+
+                {% if user.connection %}
+                <div class="info-group">
+                    <label class="label-muted">Контакты</label>
+                    <div class="connection-tag">{{ user.connection }}</div>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="profile-side-actions">
+                <button onclick="startChat({{ user.id }})" class="btn-primary">Написать</button>
+            </div>
+
         </div>
-    </a>
-    <div style="width: 195px; height: 211px; position: relative; margin-left: 10px;">
-        <div style="width: 188px; height: 41px; left: 0px; top: 0px; position: absolute">
-            <div style="justify-content: space-between; align-items: center; display: inline-flex; width: 188px; height: 41px; left: 0px; top: 0px; position: absolute; background: #F1F1F1; border-radius: 14px">
-                <div class="Text"
-                     style="overflow: hidden; margin-left: 11px; width: 95px; color: black; font-size: 12px; line-height: 24px; word-wrap: break-word">
-                    Изменить имя:
+
+        <div class="profile-section-card">
+            <h3 class="section-title">Местоположение</h3>
+            <div id="map" class="map-container"></div>
+        </div>
+
+        <div class="profile-section-card">
+            <h3 class="section-title">Интересы пользователя</h3>
+            <div class="view-interests-grid">
+                {% for item in interest %}
+                <div class="interest-card-full">
+                    <div class="interest-card-header">
+                        <h4 class="interest-title-text">{{ item.title }}</h4>
+                        <button onclick="toggleFavorite({{ item.id }})" class="btn-favorite-icon"
+                                id="fav-{{ item.id }}">
+                            ⭐
+                        </button>
+                    </div>
+                    <p class="interest-description-text">{{ item.description }}</p>
                 </div>
-                <div id="EditBox_Name" class="Text"
-                     style="overflow: hidden; height: 20px; width: 100px; text-align: center; margin: 5px; color: rgba(0, 0, 0, 0.40); font-size: 12px; word-wrap: break-word">
-                    {{user.name}}
-                </div>
+                {% endfor %}
+
+                {% if not interest %}
+                <div class="empty-state">У пользователя пока нет созданных интересов</div>
+                {% endif %}
             </div>
         </div>
-        <div style="top: 52px; position: absolute">
-            <div style="width: 187px; height: 164px; position: relative; background: #F1F1F1; border-radius: 14px; padding: 10px">
-                <div class="Text"
-                     style="width: auto; text-align: center; color: black; font-size: 12px; line-height: 24px; word-wrap: break-word">
-                    Контакты
-                </div>
-                <div id="EditBox_Connection" class="Text"
-                     style="overflow: auto; height: 114px; color: rgba(0, 0, 0, 0.40); font-size: 12px; word-wrap: break-word">
-                    {{user.connection}}
-                </div>
-            </div>
-        </div>
-    </div>
-    <div style="width: 314px; height: 204px; position: relative; margin-left: 10px; padding: 10px">
-        <div style="width: 314px; height: 204px; left: 0px; top: 0px; position: absolute; background: #F1F1F1; border-radius: 14px"></div>
-        <div id="EditBox_Description" class="Text"
-             style="width: -webkit-fill-available; overflow: auto; padding-right: 10px; height: -webkit-fill-available; top: 38px; position: absolute; color: rgba(0, 0, 0, 0.40); font-size: 12px; word-wrap: break-word">
-            {{user.information}}
-        </div>
-        <div class="Text"
-             style="text-align: center; color: black; position: relative; font-size: 12px; line-height: 24px; word-wrap: break-word">
-            Описание
-        </div>
-    </div>
-    <div class="Text"
-         style="margin: -78px; transform: rotateZ(-90deg); position: relative; font-weight: bold; color: black; font-size: 12px; letter-spacing: 6.84px; word-wrap: break-word;">
-        Местоположение
-    </div>
-    <div id="map"
-         style="overflow: hidden; position: relative; border-radius: 16px; width: 400px; height: 225px;">
-    </div>
-</div>
-<div class="Text" style="position: relative; font-size: 31px; font-weight: bold; left: 35%;">Интересы</div>
-{% for item in interest %}
-<div style="overflow: visible; margin-top: 10px; position: relative; background: #d1d7dda3; border-radius: 16px; flex-direction: column; justify-content: flex-start; align-items: flex-start; display: inline-flex; padding: 16px">
-    <div class="interes-main-info"
-         style="overflow: visible; width: 959px; flex-direction: column; justify-content: flex-start; align-items: flex-start; gap: 12px; display: inline-flex">
-        <a style="color: black">
-            <div class="Text" style="font-weight: bold;">
-                {{item.title}}
-            </div>
-            <a/>
-            <div class="Preview"
-                 style="margin-block-end: 16px; overflow: visible; width: 959px; padding: 16px; background: #fbfbfbc2; border-radius: 12px; border: 1px #E4E5E9 solid">
-                <div class="Text" style="max-width: 924px; word-wrap: break-word;">
-                    {{item.description}}
-                </div>
-            </div>
-    </div>
+
+    </section>
 </div>
 
-{% endfor %}
-<div class="figure">
-    <img src="{{ url_for('static', filename='images/waves.svg') }}" alt="Ваше изображение"
-         style="z-index: -1; transform: rotate(180deg); right: 82%; top: 0%; position: fixed; height: 1041px; width: 1039px;">
-</div>
-<div class="figure">
-    <img src="{{ url_for('static', filename='images/waves.svg') }}" alt="Ваше изображение"
-         style="right: -22%; top: 15%; position: fixed; height: 1041px; width: 1039px; z-index: -1;">
-</div>
-<div class="figure">
-    <img src="{{ url_for('static', filename='images/waves_2.svg') }}" alt="Ваше изображение"
-         style="right: 2%; top: 25%; position: fixed; height: 1041px; width: 1039px; z-index: -1;">
-</div>
-<div class="figure">
-    <img src="{{ url_for('static', filename='images/waves_2.svg') }}" alt="Ваше изображение"
-         style="right: 62%; top: -20%; position: fixed; height: 700px; width: 700x; z-index: -1;">
-</div>
+<style>
+    /* Стили дополняют твой base.css и переменные */
+    .profile-section-card {
+        background: var(--color-panel);
+        padding: var(--space-5);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--color-border-subtle);
+    }
+
+    .profile-container {
+        max-width: 1000px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-6);
+        padding-bottom: var(--space-8);
+    }
+
+    .profile-header-card {
+        background: var(--color-panel);
+        padding: var(--space-6);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--color-border-subtle);
+        display: flex;
+        align-items: center;
+        gap: var(--space-8);
+    }
+
+    .display-name {
+        margin: 0;
+        font-size: 24px;
+        color: var(--color-text);
+    }
+
+    .static-bio {
+        color: var(--color-text-soft);
+        line-height: var(--line-height-normal);
+        margin: 0;
+    }
+
+    .label-muted {
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        display: block;
+        margin-bottom: 4px;
+    }
+
+    .connection-tag {
+        display: inline-block;
+        padding: var(--space-1) var(--space-3);
+        background: var(--color-surface);
+        border-radius: var(--radius-sm);
+        font-size: var(--font-size-sm);
+        border: 1px solid var(--color-border-subtle);
+    }
+
+    .interest-card-full {
+        background: var(--color-surface);
+        border-radius: var(--radius-md);
+        padding: var(--space-5);
+        border: 1px solid var(--color-border-subtle);
+        margin-bottom: var(--space-4);
+    }
+
+    .interest-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--space-3);
+    }
+
+    .interest-title-text {
+        margin: 0;
+        color: var(--color-accent);
+        font-size: var(--font-size-md);
+    }
+
+    .interest-description-text {
+        color: var(--color-text);
+        font-size: var(--font-size-sm);
+        line-height: var(--line-height-normal);
+    }
+
+    .btn-favorite-icon {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 20px;
+        filter: grayscale(1);
+        transition: transform 0.2s, filter 0.2s;
+    }
+
+    .btn-favorite-icon:hover {
+        transform: scale(1.2);
+        filter: grayscale(0);
+    }
+
+    .btn-favorite-icon.active {
+        filter: grayscale(0);
+    }
+
+    @media (max-width: 768px) {
+        .profile-header-card { flex-direction: column; text-align: center; }
+    }
+</style>
+
+<script>
+    async function toggleFavorite(interestId) {
+        const btn = document.getElementById(`fav-${interestId}`);
+        try {
+            const response = await fetch(`/favorite/${interestId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                btn.classList.toggle('active', result.is_favorite);
+                btn.style.filter = result.is_favorite ? 'grayscale(0)' : 'grayscale(1)';
+            }
+        } catch (e) {
+            console.error("Error toggling favorite", e);
+        }
+    }
+    async function startChat(userId) {
+        try {
+            const response = await fetch(`/create_chat/${userId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                // Переходим на страницу чата с параметром ID созданного/найденного чата
+                window.location.href = `/chat?chat_id=${data.chat_id}`;
+            } else {
+                alert(data.message || "Ошибка при создании чата");
+            }
+        } catch (error) {
+            console.error("Error:", error);
+            alert("Произошла ошибка соединения");
+        }
+    }
+
+</script>
 {% endblock %}

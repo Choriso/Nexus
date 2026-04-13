@@ -1,62 +1,186 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div style="max-width: 800px; margin: 40px auto; padding: 20px;">
-    <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 32px;">
-        <h1 style="color: white; text-align: center; margin-bottom: 30px;">Настройки профиля</h1>
-        
-        <div style="display: flex; flex-direction: column; gap: 24px;">
-            <!-- Изменение имени -->
-            <div style="background: #232533; padding: 20px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2);">
-                <label style="color: white; display: block; margin-bottom: 8px; font-weight: bold;">Имя:</label>
-                <input type="text" id="nameInput" value="{{ current_user.name }}" 
-                       style="width: 100%; padding: 10px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px;">
+<div class="app-main-grid app-main-grid--stack">
+    <section class="settings-container">
+
+        <header class="settings-header">
+            <h1 class="settings-title">Настройки профиля</h1>
+            <p class="settings-subtitle">Персонализация вашего аккаунта Connectify</p>
+        </header>
+
+        <div class="settings-content">
+            <div class="settings-card">
+                <h3 class="card-label">Публичные данные</h3>
+
+                <div class="form-group">
+                    <label for="nameInput">Отображаемое имя</label>
+                    <input type="text" id="nameInput" value="{{ current_user.name }}" class="input-field">
+                </div>
+
+                <div class="form-group">
+                    <label for="descriptionInput">О себе (информация в профиле)</label>
+                    <textarea id="descriptionInput" rows="4" class="input-field textarea-field">{{ current_user.information or '' }}</textarea>
+                </div>
             </div>
-            
-            <!-- Изменение описания -->
-            <div style="background: #232533; padding: 20px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2);">
-                <label style="color: white; display: block; margin-bottom: 8px; font-weight: bold;">Описание профиля:</label>
-                <textarea id="descriptionInput" rows="4" 
-                          style="width: 100%; padding: 10px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px; resize: vertical;">{{ current_user.information or '' }}</textarea>
+
+            <div class="settings-card">
+                <h3 class="card-label">Безопасность</h3>
+
+                <div class="form-group">
+                    <label>Новый пароль</label>
+                    <div class="password-inputs">
+                        <input type="password" id="passwordInput" placeholder="Новый пароль" class="input-field">
+                        <input type="password" id="passwordConfirmInput" placeholder="Подтверждение" class="input-field">
+                    </div>
+                    <p class="input-hint">Минимум 6 символов. Потребуется подтверждение через email.</p>
+                </div>
             </div>
-            
-            <!-- Изменение пароля -->
-            <div style="background: #232533; padding: 20px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2);">
-                <label style="color: white; display: block; margin-bottom: 8px; font-weight: bold;">Новый пароль:</label>
-                <input type="password" id="passwordInput" placeholder="Введите новый пароль" 
-                       style="width: 100%; padding: 10px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px; margin-bottom: 8px;">
-                <input type="password" id="passwordConfirmInput" placeholder="Подтвердите пароль" 
-                       style="width: 100%; padding: 10px; background: #1e1e2e; border: 1px solid rgba(255, 255, 255, 0.2); color: white; border-radius: 4px;">
-                <div style="color: #999; font-size: 12px; margin-top: 8px;">Для изменения пароля требуется подтверждение через email</div>
-            </div>
-            
-            <!-- Кнопки -->
-            <div style="display: flex; gap: 12px; justify-content: center;">
-                <button onclick="saveSettings()" 
-                        style="padding: 12px 24px; border: 1px solid white; background: transparent; color: white; cursor: pointer; font-size: 16px; border-radius: 0; transition: all 0.2s;"
-                        onmouseover="this.style.background='white'; this.style.color='#393D54'"
-                        onmouseout="this.style.background='transparent'; this.style.color='white'">
-                    Сохранить
-                </button>
-                <a href="/profile" 
-                   style="padding: 12px 24px; border: 1px solid white; background: transparent; color: white; text-decoration: none; font-size: 16px; border-radius: 0; transition: all 0.2s; display: inline-block;"
-                   onmouseover="this.style.background='white'; this.style.color='#393D54'"
-                   onmouseout="this.style.background='transparent'; this.style.color='white'">
-                    Отмена
-                </a>
+
+            <div class="settings-footer">
+                <button onclick="saveSettings()" class="btn-primary btn-save">Сохранить изменения</button>
+                <a href="/profile" class="btn-secondary">Отмена</a>
             </div>
         </div>
-    </div>
+    </section>
 </div>
 
+<style>
+.settings-container {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: var(--space-8) var(--space-4);
+}
+
+.settings-header {
+    text-align: center;
+    margin-bottom: var(--space-8);
+}
+
+.settings-title {
+    font-size: var(--font-size-lg);
+    color: var(--color-text);
+    margin-bottom: var(--space-2);
+}
+
+.settings-subtitle {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+}
+
+.settings-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+}
+
+.settings-card {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+}
+
+.card-label {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    color: var(--color-primary);
+    letter-spacing: 1.5px;
+    margin-bottom: var(--space-5);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.form-group label {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-soft);
+}
+
+/* Стилизация инпутов под твой UI */
+.input-field {
+    background: var(--color-bg);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-sm);
+    transition: border-color 0.2s;
+}
+
+.input-field:focus {
+    outline: none;
+    border-color: var(--color-primary);
+}
+
+.textarea-field {
+    resize: vertical;
+    min-height: 100px;
+}
+
+.password-inputs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+}
+
+.input-hint {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    margin-top: var(--space-1);
+}
+
+.settings-footer {
+    display: flex;
+    gap: var(--space-4);
+    justify-content: center;
+    margin-top: var(--space-6);
+}
+
+.btn-save {
+    min-width: 200px;
+}
+
+/* Вторичная кнопка (отмена) */
+.btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 30px;
+    border: 1px solid var(--color-border-subtle);
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 16px;
+    border-radius: var(--radius-0);
+    text-decoration: none;
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+    border-color: var(--color-text);
+    color: var(--color-text);
+}
+
+@media (max-width: 600px) {
+    .password-inputs { grid-template-columns: 1fr; }
+    .settings-footer { flex-direction: column; }
+}
+</style>
+
 <script>
+// Твой JS остается без изменений, он логически верный
 async function saveSettings() {
     const name = document.getElementById('nameInput').value.trim();
     const description = document.getElementById('descriptionInput').value.trim();
     const password = document.getElementById('passwordInput').value;
     const passwordConfirm = document.getElementById('passwordConfirmInput').value;
-    
-    // Валидация пароля
+
     if (password) {
         if (password.length < 6) {
             alert('Пароль должен быть не менее 6 символов');
@@ -67,43 +191,34 @@ async function saveSettings() {
             return;
         }
     }
-    
+
     const data = {
         name: name,
         information: description
     };
-    
+
     if (password) {
         data.password = password;
-        // Здесь можно добавить запрос кода подтверждения через email
-        // Пока просто сохраняем пароль
     }
-    
+
     try {
         const response = await fetch('/update_profile', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
-            alert('Настройки сохранены');
-            if (password) {
-                alert('Пароль изменён. Для полной активации требуется подтверждение через email.');
-            }
             window.location.href = '/profile';
         } else {
-            alert(result.message || 'Ошибка при сохранении настроек');
+            alert(result.message || 'Ошибка при сохранении');
         }
     } catch (error) {
         console.error('Ошибка:', error);
-        alert('Произошла ошибка. Попробуйте ещё раз.');
+        alert('Произошла ошибка');
     }
 }
 </script>
 {% endblock %}
-

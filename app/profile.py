@@ -2,11 +2,16 @@ import os
 
 from flask import Blueprint, render_template, request, redirect, abort, jsonify, current_app
 from flask_login import login_required, current_user
+from data.knowledge_graph import KnowledgeNode, KnowledgeConnection
 
 from data.user import User
 from data.interest import Interest
 from app.db import get_db_session
 from werkzeug.utils import secure_filename
+import uuid
+from PIL import Image
+from app.ai_profiler.core import AIProfiler
+from app.ai.models import UserPersonalityProfile
 
 profile_bp = Blueprint("profile", __name__)
 
@@ -57,44 +62,64 @@ def upload_avatar():
     if photo.filename == "":
         return jsonify({"success": False, "message": "Файл не выбран"}), 400
 
+    # Проверка расширения
     filename = secure_filename(photo.filename)
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in {"png", "jpg", "jpeg", "webp"}:
-        return jsonify({"success": False, "message": "Недопустимый формат файла. Разрешены только изображения (JPG, PNG, WEBP)"}), 400
+        return jsonify({"success": False, "message": "Недопустимый формат"}), 400
 
-    upload_folder = current_app.config["UPLOAD_FOLDER"]
-    os.makedirs(upload_folder, exist_ok=True)
-    
-    # Генерируем уникальное имя файла, чтобы избежать конфликтов
-    import uuid
-    unique_filename = f"{uuid.uuid4().hex}.{ext}"
-    photo_path = os.path.join(upload_folder, unique_filename)
-    photo.save(photo_path)
+    # ИЗМЕНЕНИЕ: Указываем путь именно в avatars
+    # Обычно в config['UPLOAD_FOLDER'] лежит 'static/uploads'
+    base_upload_folder = current_app.config["UPLOAD_FOLDER"]
+    avatar_folder = os.path.join(base_upload_folder, "avatars")
+    os.makedirs(avatar_folder, exist_ok=True)
 
-    # Сохраняем относительный путь для использования в шаблонах
-    relative_path = f"uploads/{unique_filename}"
+    # Всегда сохраняем в .webp для экономии места
+    unique_filename = f"{uuid.uuid4().hex}.webp"
+    photo_path = os.path.join(avatar_folder, unique_filename)
+
+    try:
+        # ОБРАБОТКА (как обсуждали: квадрат + сжатие)
+        with Image.open(photo) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            # Делаем квадрат
+            width, height = img.size
+            min_side = min(width, height)
+            left = (width - min_side) / 2
+            top = (height - min_side) / 2
+            right = (width + min_side) / 2
+            bottom = (height + min_side) / 2
+            img = img.crop((left, top, right, bottom))
+
+            # Ресайз до 400px (оптимально для профиля)
+            img.thumbnail((400, 400), Image.Resampling.LANCZOS)
+            img.save(photo_path, 'WEBP', quality=85, optimize=True)
+
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Ошибка обработки: {str(e)}"}), 500
+
+    # ИЗМЕНЕНИЕ: Относительный путь теперь включает avatars
+    relative_path = f"uploads/avatars/{unique_filename}"
 
     with get_db_session() as db_sess:
         user = db_sess.get(User, current_user.id)
-        if not user:
-            return jsonify({"success": False, "message": "Пользователь не найден"}), 404
-        
-        # Удаляем старое изображение, если оно есть
-        if user.image_path:
-            old_path = user.image_path
-            # Проверяем разные варианты пути
-            if not old_path.startswith('http'):
-                if not old_path.startswith('static/'):
-                    old_path = os.path.join('static', old_path)
-                if os.path.exists(old_path):
-                    try:
-                        os.remove(old_path)
-                    except:
-                        pass
-        
+
+        # Удаление старой аватарки (с защитой от удаления дефолтной)
+        if user.image_path and 'default' not in user.image_path:
+            # Важно: удаляем через полный путь от корня проекта
+            old_full_path = os.path.join('static', user.image_path)
+            if os.path.exists(old_full_path):
+                try:
+                    os.remove(old_full_path)
+                except:
+                    pass
+
         user.image_path = relative_path
         db_sess.commit()
-    
+
+    # Возвращаем путь, который поймет <img> src
     return jsonify({"success": True, "image_path": f"/static/{relative_path}"})
 
 
@@ -148,7 +173,6 @@ def update_profile():
 @login_required
 def knowledge_graph():
     """Страница графа знаний"""
-    from data.knowledge_graph import KnowledgeNode, KnowledgeConnection
     from sqlalchemy.orm import joinedload
 
     with get_db_session() as db_sess:
@@ -333,4 +357,144 @@ def manage_connection():
             db_sess.commit()
             return jsonify({"success": True})
 
+
+@profile_bp.route("/knowledge_graph_data")
+@login_required
+def get_graph_data():
+    with get_db_session() as db_sess:
+        nodes_db = db_sess.query(KnowledgeNode).filter(
+            KnowledgeNode.user_id == current_user.id
+        ).all()
+
+        connections_db = db_sess.query(KnowledgeConnection).join(
+            KnowledgeNode, KnowledgeConnection.from_node_id == KnowledgeNode.id
+        ).filter(KnowledgeNode.user_id == current_user.id).all()
+
+        nodes = [
+            {
+                "id": n.id,
+                "title": n.title,
+                "description": n.description,
+                "category": n.category,
+                "x": n.x,
+                "y": n.y,
+            }
+            for n in nodes_db
+        ]
+
+        connections = [
+            {
+                "id": c.id,
+                "from": c.from_node_id,
+                "to": c.to_node_id,
+                "label": c.label,
+            }
+            for c in connections_db
+        ]
+    return jsonify({"nodes": nodes, "connections": connections})
+
+# Настраиваем веса под категории
+CATEGORY_CONFIG = {
+    'work': {
+        'weights': [0.3, 1.0, 0.5, 0.2, 0.8],  # Акцент на C (дисциплина) и N (стабильность)
+        'complementary': [2]  # Индекс Экстраверсии (E) — ищем дополнение
+    },
+    'hobby': {
+        'weights': [1.0, 0.2, 0.8, 0.5, 0.1],  # Акцент на O (открытость) и E (драйв)
+        'complementary': []
+    },
+    'psychology': {
+        'weights': [0.7, 0.4, 0.4, 1.0, 0.6],  # Акцент на A (дружелюбие)
+        'complementary': []
+    }
+}
+
+
+@profile_bp.route("/api/graph/match/<int:node_id>")
+@login_required
+def match_by_node(node_id):
+    # Получаем категорию из запроса (по умолчанию 'psychology')
+    raw_cat = request.args.get('category', 'psychology').lower().strip()
+
+    # Маппинг для поддержки русского и английского
+    cat_mapping = {
+        'работа': 'work',
+        'work': 'work',
+        'хобби': 'hobby',
+        'hobby': 'hobby',
+        'психология': 'psychology',
+        'psychology': 'psychology'
+    }
+
+    cat_type = cat_mapping.get(raw_cat, 'psychology')
+
+    # ДЕБАГ: Проверяем в консоли Flask, что пришло
+    print(f"--- MATCHING LOG ---")
+    print(f"Raw category from request: '{raw_cat}'")
+    print(f"Mapped category: '{cat_type}'")
+    print(f"Weights used: {CATEGORY_CONFIG[cat_type]['weights']}")
+    config = CATEGORY_CONFIG.get(cat_type, CATEGORY_CONFIG['psychology'])
+
+    with get_db_session() as db_sess:
+        target_node = db_sess.query(KnowledgeNode).get(node_id)
+        if not target_node:
+            return jsonify({"error": "Node not found"}), 404
+
+        my_profile = db_sess.query(UserPersonalityProfile).filter_by(user_id=current_user.id).first()
+
+        from app.ai_profiler.core import AIProfiler
+        profiler = AIProfiler()
+
+        candidates = db_sess.query(KnowledgeNode).filter(
+            # Либо ищем по категории узла (например, все узлы из 'Работа')
+            # Либо берем вообще всех, если база небольшая (до 1000-5000 записей это быстро)
+            KnowledgeNode.user_id != current_user.id
+        ).all()
+        matches = []
+        for node in candidates:
+            other_user = node.user
+            other_profile = db_sess.query(UserPersonalityProfile).filter_by(user_id=other_user.id).first()
+
+            interest_sim = profiler.calculate_text_similarity(target_node.title, node.title)
+
+            # Инициализируем векторы нулями на случай, если профиля нет
+            my_vec = [0, 0, 0, 0, 0]
+            other_vec = [0, 0, 0, 0, 0]
+            psy_score = 0.5
+
+            if my_profile and other_profile:
+                my_vec = [my_profile.openness, my_profile.conscientiousness, my_profile.extraversion,
+                          my_profile.agreeableness, my_profile.neuroticism]
+                other_vec = [other_profile.openness, other_profile.conscientiousness, other_profile.extraversion,
+                             other_profile.agreeableness, other_profile.neuroticism]
+
+                processed_other_vec = other_vec[:]
+                for idx in config['complementary']:
+                    processed_other_vec[idx] = 1.0 - other_vec[idx]
+
+                psy_score = profiler.calculate_compatibility(
+                    my_vec,
+                    processed_other_vec,
+                    weights=config['weights']
+                ) / 100
+
+            total_score = (interest_sim * 0.7) + (psy_score * 0.3)
+
+            # Теперь my_vec точно существует, даже если профили пустые
+            reason = "Похожие интересы"
+            if cat_type == 'work' and my_vec[2] != 0 and other_vec[2] != 0:
+                if abs(my_vec[2] - other_vec[2]) > 0.4:
+                    reason = "Дополняет вашу команду"
+
+            matches.append({
+                "user_id": other_user.id,
+                "user_name": other_user.name,
+                "node_title": node.title,
+                "compatibility": round(total_score * 100, 1),
+                "category": node.category,
+                "match_reason": reason
+            })
+
+        matches = sorted(matches, key=lambda x: x['compatibility'], reverse=True)
+        return jsonify(matches)
 

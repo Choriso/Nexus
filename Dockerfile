@@ -1,5 +1,5 @@
 # Используем официальный образ Python
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 # Устанавливаем необходимые системные зависимости
 RUN apt-get update && \
@@ -18,4 +18,4 @@ RUN pip install -r requirements.txt
 
 # Указываем команду для запуска приложения
 ENV FLASK_DEBUG=0
-CMD ["python", "app1.py"]
+CMD ["python", "App.py"]

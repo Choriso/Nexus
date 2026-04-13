@@ -1,0 +1,28 @@
+@import "../styles/variables.css";
+
+.ui-input {
+  width: 100%;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-search-panel);
+  color: var(--color-text);
+  font-size: 16px;
+  outline: none;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.ui-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.ui-input:focus {
+  border-color: rgba(74, 144, 226, 0.9);
+  box-shadow: 0 0 0 1px rgba(74, 144, 226, 0.85);
+}
+
+.search-input {
+  height: 40px;
+  padding-inline: var(--space-3);
+}
+

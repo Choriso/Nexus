@@ -1,235 +1,140 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div style="max-width: 1400px; margin: 20px auto; padding: 20px;">
-    <h1 style="color: white; text-align: center; margin-bottom: 30px;">Граф знаний</h1>
-    
-    <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; position: relative; min-height: 600px;">
-        <svg id="graphCanvas" width="100%" height="600" style="border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; background: #232533;">
-            <!-- Связи будут отрисованы здесь -->
-        </svg>
-        
-        <!-- Узлы будут отрисованы как div элементы -->
-        <div id="nodesContainer" style="position: absolute; top: 24px; left: 24px; right: 24px; bottom: 24px; pointer-events: none;">
-            {% for node in nodes %}
-            <div class="graph-node" 
-                 data-node-id="{{ node.id }}"
-                 data-x="{{ node.x }}"
-                 data-y="{{ node.y }}"
-                 style="position: absolute; left: {{ node.x + 400 }}px; top: {{ node.y + 300 }}px; background: #4a90e2; color: white; padding: 12px 16px; border-radius: 8px; cursor: move; pointer-events: all; min-width: 100px; text-align: center; border: 2px solid white;"
-                 onmousedown="startDrag(event, {{ node.id }})"
-                 ondblclick="editNode({{ node.id }})">
-                <div style="font-weight: bold; margin-bottom: 4px;">{{ node.title }}</div>
-                {% if node.description %}
-                <div style="font-size: 12px; opacity: 0.8;">{{ node.description[:30] }}{% if node.description|length > 30 %}...{% endif %}</div>
-                {% endif %}
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="{{ url_for('static', filename='js/graph_editor.js') }}"></script>
+
+<style>
+    #graph-container {
+        background: #16161a; /* Глубокий темный фон в стиле Obsidian */
+        border-radius: 12px;
+        overflow: hidden;
+        position: relative;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        border: 1px solid #242629;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: none;
+    }
+    .node-circle {
+        stroke: #16161a;
+        stroke-width: 2px;
+        transition: r 0.3s ease;
+    }
+    .node:hover .node-circle {
+        r: 12px; /* Увеличиваем при наведении */
+    }
+    .node-label {
+        fill: #94a1b2;
+        font-size: 13px;
+        pointer-events: none;
+        font-family: 'Inter', system-ui, sans-serif;
+    }
+    .link {
+        stroke: #444b5a;
+        stroke-opacity: 0.4;
+        stroke-width: 1.5px;
+    }
+    .controls {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    /* Кнопки в стиле современного UI */
+    .btn-ui {
+        background: #7f5af0;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+
+    .btn-ui:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(127, 90, 240, 0.3); }
+
+    .graphCanvas {
+        cursor: grab; /* Показывает "руку" при наведении на пустую область */
+    }
+
+    .graphCanvas:active {
+        cursor: grabbing; /* Показывает сжатый кулак при перетаскивании */
+    }
+
+    .node text {
+        pointer-events: none; /* Текст не перехватывает клики, они проходят сквозь него на узел */
+        user-select: none;
+    }
+</style>
+
+<div style="max-width: 1400px; margin: 20px auto; padding: 0 20px;">
+    <h1 style="color: #fffffe; text-align: center; font-weight: 800; margin-bottom: 20px;">Граф Знаний</h1>
+
+    <div id="graph-container">
+        <svg id="graphCanvas" style="cursor: grab" width="100%" height="650"></svg>
+        <div class="controls">
+            <button class="btn-ui" onclick="addNode()">+ Узел</button>
+            <button class="btn-ui" style="background: #2cb67d;" onclick="saveGraphPositions()">Сохранить</button>
+        </div>
+        <div id="nodeModal"
+             style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center;">
+            <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; max-width: 500px; width: 90%;">
+                <h2 style="color: white; margin-bottom: 20px;">Редактировать узел</h2>
+
+                <input type="text" id="nodeTitle" placeholder="Название"
+                       style="width: 100%; padding: 10px; margin-bottom: 12px; background: #232533; border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px;">
+
+                <textarea id="nodeDescription" placeholder="Описание" rows="4"
+                          style="width: 100%; padding: 10px; margin-bottom: 12px; background: #232533; border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px; resize: vertical;"></textarea>
+
+                <select id="nodeCategory"
+                        style="width: 100%; padding: 10px; margin-bottom: 12px; background: #232533; border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px;">
+                    <option value="">Без категории</option>
+                    <option value="work">Работа</option>
+                    <option value="hobby">Хобби</option>
+                    <option value="want">Что хочу</option>
+                    <option value="skills">Навыки</option>
+                    <option value="goals">Цели</option>
+                </select>
+
+                <div style="display: flex; gap: 12px;">
+                    <button onclick="saveNode()"
+                            style="flex: 1; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Сохранить
+                    </button>
+                    <button onclick="deleteNode()"
+                            style="padding: 12px; background: #ff6b6b; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Удалить
+                    </button>
+                    <button onclick="closeModal()"
+                            style="padding: 12px; background: #666; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Отмена
+                    </button>
+                </div>
+
             </div>
-            {% endfor %}
         </div>
-        
-        <!-- Панель управления -->
-        <div style="position: absolute; top: 24px; right: 24px; background: #232533; padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2);">
-            <button onclick="addNode()" style="padding: 8px 16px; background: #4a90e2; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 8px; display: block; width: 100%;">
-                + Добавить узел
-            </button>
-            <button onclick="saveGraph()" style="padding: 8px 16px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer; display: block; width: 100%;">
-                💾 Сохранить
-            </button>
-        </div>
+
     </div>
 </div>
-
-<!-- Модальное окно для редактирования узла -->
-<div id="nodeModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center;">
-    <div style="background: #393D54; border: 2px solid white; border-radius: 16px; padding: 24px; max-width: 500px; width: 90%;">
-        <h2 style="color: white; margin-bottom: 20px;">Редактировать узел</h2>
-        <input type="text" id="nodeTitle" placeholder="Название" style="width: 100%; padding: 10px; margin-bottom: 12px; background: #232533; border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px;">
-        <textarea id="nodeDescription" placeholder="Описание" rows="4" style="width: 100%; padding: 10px; margin-bottom: 12px; background: #232533; border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px; resize: vertical;"></textarea>
-        <select id="nodeCategory" style="width: 100%; padding: 10px; margin-bottom: 12px; background: #232533; border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px;">
-            <option value="">Без категории</option>
-            <option value="work">Работа</option>
-            <option value="hobby">Хобби</option>
-            <option value="want">Что хочу</option>
-            <option value="skills">Навыки</option>
-            <option value="goals">Цели</option>
-        </select>
-        <div style="display: flex; gap: 12px;">
-            <button onclick="saveNode()" style="flex: 1; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">Сохранить</button>
-            <button onclick="deleteNode()" style="padding: 12px; background: #ff6b6b; color: white; border: none; border-radius: 4px; cursor: pointer;">Удалить</button>
-            <button onclick="closeModal()" style="padding: 12px; background: #666; color: white; border: none; border-radius: 4px; cursor: pointer;">Отмена</button>
-        </div>
-    </div>
-</div>
-
 <script>
-let nodes = {{ nodes|tojson }};
-let connections = {{ connections|tojson }};
-let draggingNode = null;
-let editingNodeId = null;
+    // Ждем полной загрузки DOM и всех скриптов
+    window.addEventListener('load', () => {
+        const nodesData = {{ nodes|tojson if nodes else [] }};
+        const connectionsData = {{ connections|tojson if connections else [] }};
 
-// Отрисовка связей
-function drawConnections() {
-    const svg = document.getElementById('graphCanvas');
-    const existingLines = svg.querySelectorAll('line');
-    existingLines.forEach(line => line.remove());
-    
-    connections.forEach(conn => {
-        const fromNode = document.querySelector(`[data-node-id="${conn.from_node_id}"]`);
-        const toNode = document.querySelector(`[data-node-id="${conn.to_node_id}"]`);
-        
-        if (fromNode && toNode) {
-            const fromRect = fromNode.getBoundingClientRect();
-            const toRect = toNode.getBoundingClientRect();
-            const svgRect = svg.getBoundingClientRect();
-            
-            const x1 = fromRect.left + fromRect.width / 2 - svgRect.left;
-            const y1 = fromRect.top + fromRect.height / 2 - svgRect.top;
-            const x2 = toRect.left + toRect.width / 2 - svgRect.left;
-            const y2 = toRect.top + toRect.height / 2 - svgRect.top;
-            
-            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            line.setAttribute('x1', x1);
-            line.setAttribute('y1', y1);
-            line.setAttribute('x2', x2);
-            line.setAttribute('y2', y2);
-            line.setAttribute('stroke', '#4a90e2');
-            line.setAttribute('stroke-width', '2');
-            svg.appendChild(line);
+        if (typeof initGraph === 'function') {
+            initGraph(nodesData, connectionsData);
+        } else {
+            console.error("Критическая ошибка: initGraph не загружена!");
         }
     });
-}
-
-function startDrag(event, nodeId) {
-    draggingNode = nodeId;
-    event.preventDefault();
-}
-
-document.addEventListener('mousemove', (e) => {
-    if (draggingNode) {
-        const node = document.querySelector(`[data-node-id="${draggingNode}"]`);
-        const container = document.getElementById('nodesContainer');
-        const rect = container.getBoundingClientRect();
-        
-        const x = e.clientX - rect.left - 50;
-        const y = e.clientY - rect.top - 20;
-        
-        node.style.left = x + 'px';
-        node.style.top = y + 'px';
-        node.dataset.x = (x - 400).toString();
-        node.dataset.y = (y - 300).toString();
-        
-        drawConnections();
-    }
-});
-
-document.addEventListener('mouseup', () => {
-    draggingNode = null;
-});
-
-function addNode() {
-    editingNodeId = null;
-    document.getElementById('nodeTitle').value = '';
-    document.getElementById('nodeDescription').value = '';
-    document.getElementById('nodeCategory').value = '';
-    document.getElementById('nodeModal').style.display = 'flex';
-}
-
-function editNode(nodeId) {
-    editingNodeId = nodeId;
-    const node = nodes.find(n => n.id === nodeId);
-    if (node) {
-        document.getElementById('nodeTitle').value = node.title;
-        document.getElementById('nodeDescription').value = node.description || '';
-        document.getElementById('nodeCategory').value = node.category || '';
-        document.getElementById('nodeModal').style.display = 'flex';
-    }
-}
-
-function closeModal() {
-    document.getElementById('nodeModal').style.display = 'none';
-}
-
-async function saveNode() {
-    const title = document.getElementById('nodeTitle').value.trim();
-    if (!title) {
-        alert('Введите название узла');
-        return;
-    }
-    
-    const nodeData = {
-        title: title,
-        description: document.getElementById('nodeDescription').value,
-        category: document.getElementById('nodeCategory').value
-    };
-    
-    if (editingNodeId) {
-        // Обновление существующего узла
-        const node = document.querySelector(`[data-node-id="${editingNodeId}"]`);
-        nodeData.x = parseFloat(node.dataset.x);
-        nodeData.y = parseFloat(node.dataset.y);
-        
-        const response = await fetch(`/knowledge_graph/node/${editingNodeId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(nodeData)
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            location.reload();
-        }
-    } else {
-        // Создание нового узла
-        nodeData.x = 0;
-        nodeData.y = 0;
-        
-        const response = await fetch('/knowledge_graph/node', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(nodeData)
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            location.reload();
-        }
-    }
-}
-
-async function deleteNode() {
-    if (!editingNodeId || !confirm('Удалить этот узел?')) return;
-    
-    const response = await fetch(`/knowledge_graph/node/${editingNodeId}`, {
-        method: 'DELETE'
-    });
-    
-    const result = await response.json();
-    if (result.success) {
-        location.reload();
-    }
-}
-
-async function saveGraph() {
-    // Сохраняем позиции всех узлов
-    const nodeElements = document.querySelectorAll('.graph-node');
-    for (const nodeEl of nodeElements) {
-        const nodeId = nodeEl.dataset.nodeId;
-        const x = parseFloat(nodeEl.dataset.x);
-        const y = parseFloat(nodeEl.dataset.y);
-        
-        await fetch(`/knowledge_graph/node/${nodeId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ x: x, y: y })
-        });
-    }
-    
-    alert('Граф сохранён!');
-}
-
-// Инициализация
-drawConnections();
-setInterval(drawConnections, 100);
 </script>
-{% endblock %}
 
+
+{% endblock %}

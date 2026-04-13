@@ -1,43 +1,32 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='src/layouts/base.css') }}">
+
     <script src="https://api-maps.yandex.ru/2.0/?load=package.standard&amp;lang=ru-RU&amp;apikey=<dda3ddba-c9ea-4ead-9010-f43fbc15c6e3>"
             type="text/javascript"></script>
     <script src="{{ url_for('static', filename='geolocation_ip.js') }}"></script>
-    <link rel="stylesheet"
-          href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
-          integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh"
-          crossorigin="anonymous">
-    <link rel="stylesheet" type="text/css" href="/static/CSS/interestStyle.css">
-    <title>{{title}}</title>
 </head>
-<body>
-<header>
-    <div class="container" style="max-width: 1900px; ">
-    <a class="left-item" href="/intereses" style="color: white" >Connectify</a>
-    <div class="center-items">
-        <a class="btn" href="/chat">Чат</a>
-        <a class="btn" href="/profile">Профиль</a>
-        <a class="btn" href="/interest">Создать интерес</a>
-
+<body class="app-root">
+<header class="app-header">
+    <div class="app-header__container">
+        <a class="app-header__brand" href="/intereses">NEXUS</a>
+        <nav class="app-header__nav">
+            <a class="btn-primary" href="/chat">Чат</a>
+            <a class="btn-primary" href="/profile">Профиль</a>
+            <a class="btn-primary" href="/interest">Создать интерес</a>
+        </nav>
     </div>
 </header>
-<script>
-    function navigate() {
-            var selectElement = document.getElementById("menu");
-            var selectedValue = selectElement.options[selectElement.selectedIndex].value;
-            if (selectedValue) {
-                window.location.href = selectedValue;
-            }
-        }
 
-
-
-</script>
-<main role="main">
+<main role="main" class="app-main">
     {% block content %}{% endblock %}
 </main>
+
+<footer></footer>
 </body>
 </html>

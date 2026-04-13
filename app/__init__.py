@@ -18,7 +18,7 @@ def create_app() -> Flask:
 
     # Конфигурация приложения через переменные окружения (с дефолтами для dev)
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
-        "CHAT_DATABASE_URL",
+        "DATABASE_URL",
         "sqlite:///chat.db",
     )
     app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "static/uploads/")

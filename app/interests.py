@@ -127,26 +127,41 @@ def delete_interest(id):
 
 @interests_bp.route("/search", methods=["GET"])
 def search():
-    SIMILAR_RATIO = 0.5
-    query = request.args.get("q")
-    if query == "все":
-        return redirect("/intereses")
+    query_text = request.args.get("q", "").strip().lower()
+
+    if not query_text or query_text == "все":
+        return redirect(url_for("interests.index"))
 
     with get_db_session() as db_sess:
-        if query:
-            vector_query = line_vector(query)
-            # Используем joinedload для загрузки пользователей вместе с интересами
-            all_interests = db_sess.query(Interest).options(joinedload(Interest.user)).all()
-            interest_searched = {}
-            for i in all_interests:
-                tittle_cos = cosdis(vector_query, line_vector(i.title))
-                disc_cos = cosdis(vector_query, line_vector(i.description))
-                if tittle_cos > SIMILAR_RATIO:
-                    interest_searched[i] = tittle_cos
-                elif disc_cos > SIMILAR_RATIO:
-                    interest_searched[i] = disc_cos
-            sorted_interests = [i[0] for i in sorted(interest_searched.items(), key=lambda item: item[1])][::-1]
-            return render_template("chat.html", interest=sorted_interests)
+        # Загружаем всё с авторами
+        # Фильтруем: заголовок содержит запрос ИЛИ описание содержит запрос
+        results = (
+            db_sess.query(Interest)
+            .join(Interest.user)
+            .options(joinedload(Interest.user))
+            .filter(
+                (Interest.title.ilike(f"%{query_text}%")) |
+                (Interest.description.ilike(f"%{query_text}%"))
+            )
+            .all()
+        )
+
+        # Если ты всё же хочешь оставить свою векторную логику,
+        # просто исправь название шаблона в конце:
+        # return render_template("index.html", interest=sorted_interests, current_user=current_user)
+
+        # Для отображения сердечек (избранного) в поиске:
+        favorite_ids = set()
+        if current_user.is_authenticated:
+            favorite_ids = {fav.interest_id for fav in db_sess.query(FavoriteInterest).filter(
+                FavoriteInterest.user_id == current_user.id
+            ).all()}
+
+        return render_template("index.html",
+                               interest=results,
+                               current_user=current_user,
+                               favorite_ids=favorite_ids,
+                               query=query_text)
 
 
 @interests_bp.route("/create_chat/<int:user_id>", methods=["POST"])
@@ -226,3 +241,54 @@ def favorites():
     return render_template("index.html", interest=interests, current_user=current_user, show_favorites=True)
 
 
+@interests_bp.route("/api/graph/match/<int:node_id>")
+@login_required
+def match_by_node(node_id):
+    with get_db_session() as db_sess:
+        # 1. Получаем узел, на который нажали
+        target_node = db_sess.query(KnowledgeNode).get(node_id)
+        if not target_node:
+            return jsonify({"error": "Node not found"}), 404
+
+        # 2. Ищем людей с такими же узлами (кроме себя)
+        # Можно искать по точному названию или по категории
+        similar_nodes = db_sess.query(KnowledgeNode).filter(
+            KnowledgeNode.title.ilike(f"%{target_node.title}%"),
+            KnowledgeNode.user_id != current_user.id
+        ).all()
+
+        # 3. Получаем психологический профиль текущего пользователя
+        my_profile = db_sess.query(UserPersonalityProfile).filter_by(user_id=current_user.id).first()
+
+        matches = []
+        for node in similar_nodes:
+            other_user = node.user
+            other_profile = db_sess.query(UserPersonalityProfile).filter_by(user_id=other_user.id).first()
+
+            # Базовый скор на основе схожести текстов (можно юзать твой cosdis)
+            base_score = 0.8
+
+            # Психологический модификатор (из твоего AIProfiler)
+            psy_score = 0.5
+            if my_profile and other_profile:
+                from app.ai_profiler.core import AIProfiler
+                profiler = AIProfiler()
+                my_vec = [my_profile.openness, my_profile.conscientiousness, my_profile.extraversion,
+                          my_profile.agreeableness, my_profile.neuroticism]
+                other_vec = [other_profile.openness, other_profile.conscientiousness, other_profile.extraversion,
+                             other_profile.agreeableness, other_profile.neuroticism]
+                psy_score = profiler.calculate_compatibility(my_vec, other_vec) / 100
+
+            total_score = (base_score * 0.6) + (psy_score * 0.4)
+
+            matches.append({
+                "user_id": other_user.id,
+                "user_name": other_user.name,
+                "node_title": node.title,
+                "compatibility": round(total_score * 100, 1),
+                "category": node.category
+            })
+
+        # Сортируем по совместимости
+        matches = sorted(matches, key=lambda x: x['compatibility'], reverse=True)
+        return jsonify(matches)

@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>CONNECTIFY</title>
-    <link rel="stylesheet" type="text/css" href="/static/CSS/startScreen.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='src/layouts/base.css') }}">
     <style>
-        /* Скрытие элемента по умолчанию */
         #registerFrame {
             display: none;
         }
@@ -14,115 +13,128 @@
         }
     </style>
 </head>
-<body>
-    <div class="header">CONNECTIFY</div>
+<body style="display: flex; align-items: center;">
+<div class="app-main-grid">
+    <section class="app-main-grid__main" style="display: flex; flex-direction: column; align-items: center">
 
-    <div class="description">
-        платформа для того, чтобы найти людей, которые разделяют ваши интересы. Мы создали это место, чтобы вы могли легко познакомиться с единомышленниками, обсудить увлекательные темы, обменяться идеями и создать сообщества вокруг ваших увлечений
-    </div>
 
-    <div class="content-container">
-        <div class="content-box">
-            Легко общайтесь с людьми, которые вам интересны. Наш чат поддерживает текстовые сообщения, эмодзи и файлы, чтобы ваше общение было комфортным
-            Подберите людей по интересам, увлечениям, профессиональной деятельности или местоположению. Наши умные алгоритмы помогают вам находить идеальных собеседников
+        <div class="container_1" style="padding: 188px; flex-direction: column; gap: var(--space-6);">
+            <div class="ui-card__header" style="font-size: xxx-large">NEXUS</div>
+            платформа для того, чтобы найти людей, которые разделяют ваши интересы. Мы создали это место, чтобы вы могли
+            легко познакомиться с единомышленниками, обсудить увлекательные темы, обменяться идеями и создать сообщества
+            вокруг ваших увлечений
+            <div class="button-container">
+            {% if current_user.is_authenticated %}
+            <a href="/intereses">
+                <button class="btn-primary" id="startOldButton">Start</button>
+            </a>
+            {% else %}
+            <button class="btn-primary" id="startNewButton">Start</button>
+            {% endif %}
         </div>
-        <div class="content-box" style="justify-content: center">
-            Мы учитываем ваш профиль и предпочтения, чтобы предлагать вам лучших партнеров для общения и сотрудничества
         </div>
-        <div class="content-box" >
-            <div class="svg-container">
-                <img src="../static/images/file.svg" alt="Руки" class="image-placeholder"
-                    style="z-index: -1; right: 82%; top: 0%; height: 200px;">
+
+
+        <div class="frame" id="registerFrame">
+            <div class="frame-divider"></div>
+
+            <div class="frame-text register" id="openRegister">Register</div>
+            <div class="frame-text signin" id="openSignIn">Sign in</div>
+
+            <div class="close-button" id="closeFrame">
+                <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none"
+                     xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.66663 13.8669L14.3333 2.2002" stroke="white" stroke-width="3" stroke-linecap="square"
+                          stroke-linejoin="round"/>
+                </svg>
+                <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none"
+                     xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.66671 2.20019L14.3334 13.8669" stroke="white" stroke-width="3" stroke-linecap="square"
+                          stroke-linejoin="round"/>
+                </svg>
             </div>
         </div>
-    </div>
-    <div class="button-container">
-        {% if current_user.is_authenticated %}
-        <a href="/intereses">
-            <button class="button" id="startOldButton">Start</button>
-        </a>
-        {% else %}
-        <button class="button" id="startNewButton">Start</button>
-        {% endif %}
-    </div>
 
-    <div class="frame" id="registerFrame">
-    <div class="frame-divider"></div>
-
-    <div class="frame-text register" id="openRegister">Register</div>
-    <div class="frame-text signin" id="openSignIn">Sign in</div>
-
-    <div class="close-button" id="closeFrame">
-        <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M2.66663 13.8669L14.3333 2.2002" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
-        </svg>
-        <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M2.66671 2.20019L14.3334 13.8669" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
-        </svg>
-    </div>
-    </div>
-
-    <div class="frame" id="signinDialog" >
-        <div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); font-size: 20px; color: white; font-family: `Geist Mono`, monospace;">
-            <h2>Sign in </h2>
-        </div>
-        <span class="frame-text" style="top: 120px; left: 30px;">Email:</span>
-        <input type="email" id="signinEmail" class="v43_38" placeholder="Enter your email" style="position: absolute; top: 150px; left: 30px; width: 350px;" />
-
-        <span class="frame-text" style="top: 210px; left: 30px;">Password:</span>
-        <input type="password" id="signinPassword" class="v43_39" placeholder="Enter your password" style="position: absolute; top: 240px; left: 30px; width: 350px;" />
-
-        <button class="button" id="submitSignin" style="position: absolute; bottom: 50px; left: 30px;">Submit</button>
-
-        <div class="close-button" id="closeSignin">
-            <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2.66663 13.8669L14.3333 2.2002" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
-            </svg>
-            <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2.66671 2.20019L14.3334 13.8669" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
-            </svg>
-        </div>
-    </div>
-
-    <div class="frame" id="registerDialog" style="display: none;">
-        <div style="margin-left: 20px;">
-            <h2 class="dialog-title">Register</h2>
-        </div>
-
-        <div class="form-container" style="display: flex; flex-direction: column; gap: 15px; margin: 20px;">
-            <label >Email:</label>
-            <input type="email" id="registerEmail" class="registerEmail" placeholder="Enter your email" />
-
-            <label >Password:</label>
-            <input type="password" id="registerPassword" class="registerPassword" placeholder="Enter your password" />
-
-            <label >Full name:</label>
-            <input type="text" class="registerName" id="registerName" placeholder="Enter your full name" />
-
-            <!-- Чекбокс: Принятие политики -->
-            <label class="checkbox-container">
-                <input type="checkbox" id="acceptPolicy" />
-                <span>Agree with private policy</span>
-            </label>
-
-            <label class="checkbox-container" id="locationCheckbox">
-            <input type="checkbox" id="allowLocation" />
-            <span>Allow access to your location</span>
-            <div id="locationTooltip" class="tooltip" style="display: none; color: grey;">We use your location to improve search accuracy.
+        <div class="frame" id="signinDialog">
+            <div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); font-size: 20px; color: white; font-family: `Geist Mono`, monospace;">
+                <h2>Sign in </h2>
             </div>
-        </label>
+            <span class="frame-text" style="top: 120px; left: 30px;">Email:</span>
+            <input type="email" id="signinEmail" class="v43_38" placeholder="Enter your email"
+                   style="position: absolute; top: 150px; left: 30px; width: 350px;"/>
 
-        <button class="button" id="submitRegister" style="position: absolute; bottom: 20px; left: 20px;">Submit</button>
+            <span class="frame-text" style="top: 210px; left: 30px;">Password:</span>
+            <input type="password" id="signinPassword" class="v43_39" placeholder="Enter your password"
+                   style="position: absolute; top: 240px; left: 30px; width: 350px;"/>
 
-        <div class="close-button" id="closeRegister">
-            <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2.66663 13.8669L14.3333 2.2002" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
-            </svg>
-            <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2.66671 2.20019L14.3334 13.8669" stroke="white" stroke-width="3" stroke-linecap="square" stroke-linejoin="round"/>
-            </svg>
+            <button class="button" id="submitSignin" style="position: absolute; bottom: 50px; left: 30px;">Submit
+            </button>
+
+            <div class="close-button" id="closeSignin">
+                <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none"
+                     xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.66663 13.8669L14.3333 2.2002" stroke="white" stroke-width="3" stroke-linecap="square"
+                          stroke-linejoin="round"/>
+                </svg>
+                <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none"
+                     xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.66671 2.20019L14.3334 13.8669" stroke="white" stroke-width="3" stroke-linecap="square"
+                          stroke-linejoin="round"/>
+                </svg>
+            </div>
         </div>
-    </div>
+
+        <div class="frame" id="registerDialog" style="display: none;">
+            <div style="margin-left: 20px;">
+                <h2 class="dialog-title">Register</h2>
+            </div>
+
+            <div class="form-container" style="display: flex; flex-direction: column; gap: 15px; margin: 20px;">
+                <label>Email:</label>
+                <input type="email" id="registerEmail" class="registerEmail" placeholder="Enter your email"/>
+
+                <label>Password:</label>
+                <input type="password" id="registerPassword" class="registerPassword"
+                       placeholder="Enter your password"/>
+
+                <label>Full name:</label>
+                <input type="text" class="registerName" id="registerName" placeholder="Enter your full name"/>
+
+                <!-- Чекбокс: Принятие политики -->
+                <label class="checkbox-container">
+                    <input type="checkbox" id="acceptPolicy"/>
+                    <span>Agree with private policy</span>
+                </label>
+
+                <label class="checkbox-container" id="locationCheckbox">
+                    <input type="checkbox" id="allowLocation"/>
+                    <span>Allow access to your location</span>
+                    <div id="locationTooltip" class="tooltip" style="display: none; color: grey;">We use your location
+                        to improve search accuracy.
+                    </div>
+                </label>
+
+                <button class="button" id="submitRegister" style="position: absolute; bottom: 20px; left: 20px;">
+                    Submit
+                </button>
+
+                <div class="close-button" id="closeRegister">
+                    <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none"
+                         xmlns="http://www.w3.org/2000/svg">
+                        <path d="M2.66663 13.8669L14.3333 2.2002" stroke="white" stroke-width="3"
+                              stroke-linecap="square" stroke-linejoin="round"/>
+                    </svg>
+                    <svg class="close-icon" width="17" height="16" viewBox="0 0 17 16" fill="none"
+                         xmlns="http://www.w3.org/2000/svg">
+                        <path d="M2.66671 2.20019L14.3334 13.8669" stroke="white" stroke-width="3"
+                              stroke-linecap="square" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            </div>
+    </section>
+
+    <aside class="app-main-grid__side"></aside>
+</div>
 <script>
     document.getElementById("closeFrame").addEventListener("click", () => {
         document.getElementById("registerFrame").style.display = "none";
@@ -206,7 +218,7 @@
 
         if (result.success) {
             alert("Вход выполнен успешно!");
-            window.location.href = '/dashboard';
+            window.location.href = '/intereses';
         } else {
             alert(`Ошибка: ${result.message}`);
         }

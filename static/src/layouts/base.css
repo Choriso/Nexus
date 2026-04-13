@@ -1,0 +1,142 @@
+@import "../styles/variables.css";
+@import "../components/button.css";
+@import "../components/card.css";
+@import "../components/input.css";
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+.app-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  width: 100%;
+}
+
+.app-header__container {
+  max-width: 1900px;
+  margin: 0 auto;
+  padding: var(--space-2) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  background: var(--color-panel)
+}
+
+.app-header__brand {
+  text-decoration: none;
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.app-header__nav {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.app-main {
+  flex: 1;
+}
+
+.app-main-grid {
+  max-width: 1200px;
+  margin: var(--space-5) auto 0;
+  padding: 0 var(--space-4);
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.app-main-grid--stack {
+  grid-template-columns: 1fr;
+}
+
+.app-main-grid__main {
+  min-width: 0;
+}
+
+.app-main-grid__side {
+  min-width: 0;
+}
+
+@media (max-width: 960px) {
+  .app-main-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Page-specific layout helpers */
+.search-container {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 auto var(--space-4);
+}
+
+.search-container__form {
+  width: 100%;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.container_1 {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-0);
+  margin: 0 0 var(--space-5);
+  padding: var(--space-2);
+  gap: var(--space-3);
+}
+
+.left-item {
+  margin-right: auto;
+  padding-left: var(--space-5);
+}
+
+.center-items {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2);
+}
+
+.avatar-img {
+  width: 50px;
+  height: 50px;
+  border-radius: var(--radius-round);
+  border: 2px solid var(--color-border-strong);
+  object-fit: cover;
+  background: var(--color-surface);
+  flex: 0 0 auto;
+}
+
+.avatar-img--profile {
+  width: 200px;
+  height: 200px;
+  border-radius: var(--radius-round);
+}
+
+.map-container {
+    width: 100%;
+    height: 250px; /* Задай высоту, иначе карта будет 0 пикселей в высоту */
+    background: var(--color-surface); /* Чтобы видеть блок до загрузки карты */
+    border-radius: var(--radius-0);
+    border: 1px solid var(--color-border-subtle);
+    margin-top: var(--space-3);
+}
+

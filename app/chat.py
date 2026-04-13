@@ -6,6 +6,10 @@ from flask_socketio import emit
 import sqlalchemy as sa
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageFile
+import uuid
+from PIL import Image as PILImage
+
+from app.ai.personality_analyzer import analyze_user_profile
 
 from data.chat import Chat
 from data.message import Message
@@ -22,7 +26,7 @@ chat_bp = Blueprint("chat", __name__)
 def all_chats():
     # Получаем все чаты для текущего пользователя
     chat_data = get_user_chats(current_user.id)
-    
+
     # Проверяем, передан ли chat_id в query параметрах
     requested_chat_id = request.args.get("chat_id")
     if requested_chat_id:
@@ -117,13 +121,30 @@ def chat_messages(chat_id):
 
         messages = db_sess.query(Message).filter(Message.chat_id == chat_id).order_by(Message.timestamp.asc()).all()
 
-        messages_data = [{
-            "id": message.id,
-            "content": message.content,
-            "message_type": message.message_type,
-            "timestamp": message.timestamp.isoformat() if message.timestamp else None,
-            "sent_by_user": message.author_id == current_user.id,
-        } for message in messages]
+        messages_data = []
+        for message in messages:
+            msg_item = {
+                "id": message.id,
+                "content": message.content,
+                "message_type": message.message_type,
+                "timestamp": message.timestamp.isoformat() if message.timestamp else None,
+                "sent_by_user": message.author_id == current_user.id,
+                "reply_to_id": message.reply_to_id,
+            }
+
+            # ВАЖНО: Добавляем текст сообщения, на которое отвечаем
+            if message.reply_to_id:
+                reply_msg = db_sess.query(Message).filter(Message.id == message.reply_to_id).first()
+                if reply_msg:
+                    # Если это картинка, можно написать "Фото", если текст — само содержание
+                    if reply_msg.message_type == 'image':
+                        msg_item["reply_to_content"] = "🖼 Фотография"
+                    else:
+                        msg_item["reply_to_content"] = reply_msg.content
+                else:
+                    msg_item["reply_to_content"] = "Сообщение удалено"
+
+            messages_data.append(msg_item)
 
         # Получаем имя второго участника
         other_user_id = chat.user2_id if chat.user1_id == current_user.id else chat.user1_id
@@ -158,7 +179,8 @@ def handle_message(data):
     message_type = "text"
     if file_url:
         # простой эвристический тип
-        message_type = "image" if any(file_url.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"]) else "file"
+        message_type = "image" if any(
+            file_url.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"]) else "file"
 
     if not current_user.is_authenticated:
         # Игнорируем сообщения от неавторизованных пользователей
@@ -214,7 +236,7 @@ def send_message():
             reply_message = db_sess.query(Message).filter(Message.id == reply_to_id).first()
             if not reply_message or reply_message.chat_id != chat_id:
                 return jsonify({"status": "error", "message": "Неверное сообщение для ответа"}), 400
-        
+
         new_message = Message(
             chat_id=chat_id,
             author_id=author_id,
@@ -224,6 +246,12 @@ def send_message():
         )
         db_sess.add(new_message)
         db_sess.commit()
+        try:
+            # Запускаем фоновый анализ пользователя
+            analyze_user_profile.delay(author_id)
+        except Exception as e:
+            # Логируем ошибку, чтобы она не ломала чат
+            print(f"Ошибка вызова Celery: {e}")
 
         return jsonify({"status": "ok", "message": {
             "id": new_message.id,
@@ -302,48 +330,58 @@ def upload_file():
 
     filename = secure_filename(file.filename)
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    # Расширяем список разрешенных типов файлов
-    allowed_extensions = {"png", "jpg", "jpeg", "webp", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "json", "xml", "csv", "zip", "rar", "7z", "mp3", "wav", "mp4", "avi", "mov"}
+
+    allowed_extensions = {
+        "png", "jpg", "jpeg", "webp", "pdf", "doc", "docx", "xls", "xlsx",
+        "ppt", "pptx", "txt", "md", "json", "xml", "csv", "zip", "rar", "7z",
+        "mp3", "wav", "mp4", "avi", "mov"
+    }
+
     if ext not in allowed_extensions:
         return jsonify({"error": "Unsupported file type"}), 400
 
-    upload_folder = current_app.config["UPLOAD_FOLDER"]
-    os.makedirs(upload_folder, exist_ok=True)
-    
-    # Генерируем уникальное имя файла
-    import uuid
-    unique_filename = f"{uuid.uuid4().hex}.{ext}"
-    file_path = os.path.join(upload_folder, unique_filename)
-    
-    if ext in {"png", "jpg", "jpeg", "webp"}:
-        ImageFile.LOAD_TRUNCATED_IMAGES = True  # Разрешаем загружать "битые" файлы
-        img = Image.open(file.stream)
-        img = img.convert("RGB")  # Конвертируем в RGB (если PNG, уберем альфа-канал)
-        img.save(file_path, "JPEG", quality=70, icc_profile=None)  # Сохраняем с качеством 70%
-    else:
-        file.save(file_path)  # Просто сохраняем файл, если это не картинка
+    # Определяем путь: static/uploads/chat_files
+    # Убедись, что UPLOAD_FOLDER в конфиге указывает на 'static/uploads'
+    chat_folder = os.path.join(current_app.config["UPLOAD_FOLDER"], "chat_files")
+    os.makedirs(chat_folder, exist_ok=True)
 
-    # Отдаем URL файла для отображения (используем относительный путь)
-    file_url = url_for("chat.get_uploaded_file", filename=unique_filename)
+    unique_filename = f"{uuid.uuid4().hex}.{ext}"
+    file_path = os.path.join(chat_folder, unique_filename)
+
+    try:
+        # Если это изображение — сжимаем, но НЕ обрезаем
+        if ext in {"png", "jpg", "jpeg", "webp"}:
+            unique_filename = f"{uuid.uuid4().hex}.webp"  # Переводим в webp
+            file_path = os.path.join(chat_folder, unique_filename)
+
+            with PILImage.open(file) as img:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+
+                # Ограничиваем только макс. размер (например, Full HD), сохраняя пропорции
+                img.thumbnail((1920, 1080), PILImage.Resampling.LANCZOS)
+                img.save(file_path, "WEBP", quality=75, optimize=True)
+        else:
+            # Все остальные файлы (PDF, ZIP и т.д.) просто сохраняем как есть
+            file.save(file_path)
+
+    except Exception as e:
+        return jsonify({"error": f"Save error: {str(e)}"}), 500
+
+    # Теперь используем стандартный url_for для статики
+    # Это работает быстрее, так как Flask/Nginx отдают файлы напрямую
+    file_url = url_for('static', filename=f'uploads/chat_files/{unique_filename}')
+
     return jsonify({"status": "ok", "file_url": file_url})
 
 
 @chat_bp.route("/uploads/<filename>")
 def get_uploaded_file(filename):
-    upload_folder = current_app.config["UPLOAD_FOLDER"]
-    # Безопасная проверка пути
-    if not os.path.isabs(upload_folder):
-        # Если путь относительный, делаем его относительно корня приложения
-        upload_folder = os.path.join(current_app.root_path, "..", upload_folder)
-        upload_folder = os.path.normpath(os.path.abspath(upload_folder))
-    
-    # Проверяем, что файл существует
-    file_path = os.path.join(upload_folder, filename)
-    if not os.path.exists(file_path):
-        from flask import abort
-        abort(404)
-    
-    return send_from_directory(upload_folder, filename)
+    # Указываем путь до конкретной папки чата
+    upload_folder = os.path.join(current_app.config["UPLOAD_FOLDER"], "chat_files")
+    full_path = os.path.join(current_app.root_path, upload_folder)
+
+    return send_from_directory(full_path, filename)
 
 
 def get_or_create_chat(user1_id, user2_id):
@@ -380,7 +418,7 @@ def get_chat_messages(chat_id):
             .where(Message.chat_id == chat_id)
             .order_by(Message.timestamp.asc())
         ).scalars().all()
-        
+
         result = []
         for msg in messages:
             msg_data = {
@@ -398,7 +436,7 @@ def get_chat_messages(chat_id):
                 if reply_msg:
                     msg_data["reply_to_content"] = reply_msg.content or ""
             result.append(msg_data)
-        
+
         return jsonify({"messages": result, "chat_name": get_chat_name(chat_id, current_user.id)})
 
 
@@ -414,7 +452,7 @@ def chat_settings():
                 settings = ChatSettings(user_id=current_user.id)
                 db_sess.add(settings)
                 db_sess.commit()
-            
+
             return jsonify({
                 "sound_enabled": settings.sound_enabled,
                 "notifications_enabled": settings.notifications_enabled,
@@ -428,7 +466,7 @@ def chat_settings():
             if not settings:
                 settings = ChatSettings(user_id=current_user.id)
                 db_sess.add(settings)
-            
+
             if "sound_enabled" in data:
                 settings.sound_enabled = data["sound_enabled"]
             if "notifications_enabled" in data:
@@ -437,8 +475,6 @@ def chat_settings():
                 settings.theme = data["theme"]
             if "font_size" in data:
                 settings.font_size = int(data["font_size"])
-            
+
             db_sess.commit()
             return jsonify({"success": True, "message": "Настройки сохранены"})
-
-
