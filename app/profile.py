@@ -497,4 +497,3 @@ def match_by_node(node_id):
 
         matches = sorted(matches, key=lambda x: x['compatibility'], reverse=True)
         return jsonify(matches)
-

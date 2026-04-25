@@ -16,12 +16,11 @@ def create_app() -> Flask:
         static_folder="../static",
     )
 
-    # Конфигурация приложения через переменные окружения (с дефолтами для dev)
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
-        "DATABASE_URL",
-        "sqlite:///chat.db",
-    )
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///chat.db")
     app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "static/uploads/")
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev_secret_key_change_me")
+
+    db_session.global_init(app.config["SQLALCHEMY_DATABASE_URI"])
 
     max_content_length_env = os.environ.get("MAX_CONTENT_LENGTH")
     if max_content_length_env is not None:
@@ -32,9 +31,7 @@ def create_app() -> Flask:
     else:
         app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # максимум 16 МБ
 
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev_secret_key_change_me")
-
-    # Инициализация расширений
+    # Инициализация расширений (однократно)
     login_manager.login_view = ""
     login_manager.init_app(app)
 
@@ -49,11 +46,7 @@ def create_app() -> Flask:
         # По умолчанию разрешаем все для локальной сети (dev режим)
         allowed_origins = "*"
     
-    socketio.init_app(
-        app,
-        cors_allowed_origins=allowed_origins,
-    )
-
+    socketio.init_app(app, cors_allowed_origins=allowed_origins)
     cors.init_app(
         app,
         resources={
@@ -67,12 +60,10 @@ def create_app() -> Flask:
     @login_manager.user_loader
     def load_user(user_id):
         db_sess = db_session.create_session()
-        try:
-            return db_sess.query(User).get(user_id)
-        finally:
-            db_sess.close()
+        return db_sess.get(User, user_id)
 
-    # Регистрация блюпринтов
+    from .routes import main_bp  # Создадим его сейчас
+    app.register_blueprint(main_bp)
     from .auth import auth_bp
     from .profile import profile_bp
     from .interests import interests_bp

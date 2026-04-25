@@ -16,7 +16,7 @@
             <div class="profile-info-main">
                 <div class="info-group">
                     <label class="label-muted">Имя пользователя</label>
-                    <div  id="EditBox_Name" class="editable-name">{{ current_user.name }}</div>
+                    <div id="EditBox_Name" class="editable-name">{{ current_user.name }}</div>
                 </div>
 
                 <div class="info-group">
@@ -32,7 +32,68 @@
             <h3 class="section-title">Геолокация</h3>
             <div id="map" class="map-container"></div>
         </div>
+        <div class="profile-section-card ai-personality-card">
+            <div class="ai-card-content">
 
+                <div class="ai-info-side">
+                    <div class="ai-title-group">
+                        <h3 class="m-0">AI Психотип:
+                            <span class="badge badge-primary">
+                        {{ current_user.personality_profile.mbti_type if current_user.personality_profile else 'В анализе...' }}
+                    </span>
+                        </h3>
+                        <p class="text-muted small">Анализ на основе ваших сообщений в Nexus</p>
+                    </div>
+
+                    <div class="ocean-stats-list">
+                        {% if current_user.personality_profile %}
+                        {% set traits = [
+                        ('Открытость (O)', current_user.personality_profile.openness, 'bg-info'),
+                        ('Добросовестность (C)', current_user.personality_profile.conscientiousness, 'bg-success'),
+                        ('Экстраверсия (E)', current_user.personality_profile.extraversion, 'bg-warning'),
+                        ('Дружелюбие (A)', current_user.personality_profile.agreeableness, 'bg-primary'),
+                        ('Нейротизм (N)', current_user.personality_profile.neuroticism, 'bg-danger')
+                        ] %}
+
+                        {% for label, value, color in traits %}
+                        <div class="trait-item">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span class="trait-label">{{ label }}</span>
+                                <span class="trait-value">{{ (value * 100)|round|int }}%</span>
+                            </div>
+                            <div class="progress" style="height: 6px;">
+                                <div class="progress-bar {{ color }}" role="progressbar"
+                                     style="width: {{ value * 100 }}%"></div>
+                            </div>
+                        </div>
+                        {% endfor %}
+
+                        <div class="ai-meta-info mt-4">
+                            <div class="meta-row">
+                                <span class="label-muted">Стиль общения:</span>
+                                <span class="meta-value">{{ current_user.personality_profile.communication_style|capitalize or 'Стандартный' }}</span>
+                            </div>
+                            <div class="meta-row">
+                                <span class="label-muted">Энтузиазм:</span>
+                                <span class="meta-value">{{ (current_user.personality_profile.enthusiasm * 100)|round|int }}%</span>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-light">Напишите пару сообщений в чате, чтобы ИИ смог составить ваш
+                            портрет!
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="ai-chart-side">
+                    <div class="chart-container">
+                        <canvas id="oceanChart"></canvas>
+                    </div>
+                </div>
+
+            </div>
+        </div>
         <div class="profile-interests-grid">
             <div class="interests-column">
                 <h3 class="section-title">Мои Интересы</h3>
@@ -55,7 +116,8 @@
                 <div class="interests-list">
                     {% for item in favorite_interests %}
                     <div class="interest-mini-card">
-                        <a class="interest-title" href="/viewInteres?user_id={{ item.user.id }}&interest_id={{ item.id }}">
+                        <a class="interest-title"
+                           href="/viewInteres?user_id={{ item.user.id }}&interest_id={{ item.id }}">
                             {{ item.title }}
                         </a>
                         <span class="author-tag">от {{ item.user.name }}</span>
@@ -72,8 +134,8 @@
         <div class="profile-actions-footer">
             <a href="/settings" class="btn-primary">Настройки</a>
             {% if current_user.is_moderator %}
-                <a href="/moderation" class="btn-primary">Модерация</a>
-                <a href="/analytics" class="btn-primary">Аналитика</a>
+            <a href="/moderation" class="btn-primary">Модерация</a>
+            <a href="/analytics" class="btn-primary">Аналитика</a>
             {% endif %}
         </div>
 
@@ -81,139 +143,205 @@
 </div>
 
 <style>
-/* Дополнительные стили специально для страницы профиля */
-.profile-container {
-    max-width: 900px;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-6);
-    padding-bottom: var(--space-8);
-}
+    /* Дополнительные стили специально для страницы профиля */
+    .ai-personality-card {
+        padding: var(--space-6) !important;
+    }
 
-.profile-header-card {
-    background: var(--color-panel);
-    padding: var(--space-6);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--color-border-subtle);
-    display: flex;
-    align-items: center;
-    gap: var(--space-8);
-}
+    .ai-card-content {
+        display: flex;
+        gap: var(--space-8);
+        align-items: center;
+    }
 
-.avatar-wrapper {
-    position: relative;
-    cursor: pointer;
-    transition: opacity 0.2s;
-}
+    .ai-info-side {
+        flex: 1.2;
+    }
 
-.avatar-wrapper:hover {
-    opacity: 0.9;
-}
+    .ai-chart-side {
+        flex: 0.8;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-width: 300px;
+    }
 
-.avatar-edit-badge {
-    position: absolute;
-    bottom: 8px;
-    right: 8px;
-    background: var(--color-accent);
-    border: 2px solid var(--color-bg);
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-round);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
+    .chart-container {
+        width: 100%;
+        max-width: 350px;
+    }
 
-.profile-info-main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-}
+    .trait-item {
+        margin-bottom: var(--space-3);
+    }
 
-.editable-name {
-    font-size: var(--font-size-lg);
-    font-weight: bold;
-    color: var(--color-text);
-    padding: var(--space-1) 0;
-}
+    .trait-label {
+        font-size: 13px;
+        font-weight: 500;
+    }
 
-.editable-bio {
-    color: var(--color-text-soft);
-    line-height: var(--line-height-normal);
-    min-height: 60px;
-}
+    .trait-value {
+        font-size: 12px;
+        color: var(--color-text-soft);
+    }
 
-.label-muted {
-    font-size: var(--font-size-xs);
-    color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
+    .ai-meta-info {
+        border-top: 1px solid var(--color-border-subtle);
+        padding-top: var(--space-4);
+    }
 
-.section-title {
-    margin-bottom: var(--space-4);
-    font-size: var(--font-size-md);
-    border-left: 3px solid var(--color-primary);
-    padding-left: var(--space-3);
-}
+    .meta-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: var(--space-1);
+    }
 
-.profile-section-card {
-    background: var(--color-panel);
-    padding: var(--space-5);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--color-border-subtle);
-}
+    .meta-value {
+        font-weight: bold;
+        font-size: 14px;
+    }
 
-.profile-interests-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-5);
-}
+    @media (max-width: 850px) {
+        .ai-card-content {
+            flex-direction: column;
+        }
+        .ai-chart-side {
+            order: -1; /* График сверху на мобилках */
+            min-width: 100%;
+        }
+    }
+    .profile-container {
+        max-width: 900px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-6);
+        padding-bottom: var(--space-8);
+    }
 
-.interest-mini-card {
-    background: var(--color-surface);
-    padding: var(--space-4);
-    border-radius: var(--radius-md);
-    margin-bottom: var(--space-3);
-    border: 1px solid var(--color-border-subtle);
-}
+    .profile-header-card {
+        background: var(--color-panel);
+        padding: var(--space-6);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--color-border-subtle);
+        display: flex;
+        align-items: center;
+        gap: var(--space-8);
+    }
 
-.interest-desc-short {
-    font-size: var(--font-size-sm);
-    color: var(--color-text-muted);
-    margin: var(--space-2) 0;
-}
+    .avatar-wrapper {
+        position: relative;
+        cursor: pointer;
+        transition: opacity 0.2s;
+    }
 
-.link-danger, .link-danger-btn {
-    color: #ff6b6b;
-    font-size: var(--font-size-xs);
-    text-decoration: underline;
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0;
-}
+    .avatar-wrapper:hover {
+        opacity: 0.9;
+    }
 
-.author-tag {
-    display: block;
-    font-size: 10px;
-    color: var(--color-primary);
-    margin-top: 4px;
-}
+    .avatar-edit-badge {
+        position: absolute;
+        bottom: 8px;
+        right: 8px;
+        background: var(--color-accent);
+        border: 2px solid var(--color-bg);
+        width: 36px;
+        height: 36px;
+        border-radius: var(--radius-round);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
 
-.profile-actions-footer {
-    display: flex;
-    gap: var(--space-4);
-    justify-content: center;
-    padding-top: var(--space-4);
-}
+    .profile-info-main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+    }
 
-@media (max-width: 768px) {
-    .profile-header-card { flex-direction: column; text-align: center; }
-    .profile-interests-grid { grid-template-columns: 1fr; }
-}
+    .editable-name {
+        font-size: var(--font-size-lg);
+        font-weight: bold;
+        color: var(--color-text);
+        padding: var(--space-1) 0;
+    }
+
+    .editable-bio {
+        color: var(--color-text-soft);
+        line-height: var(--line-height-normal);
+        min-height: 60px;
+    }
+
+    .label-muted {
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .section-title {
+        margin-bottom: var(--space-4);
+        font-size: var(--font-size-md);
+        border-left: 3px solid var(--color-primary);
+        padding-left: var(--space-3);
+    }
+
+    .profile-section-card {
+        background: var(--color-panel);
+        padding: var(--space-5);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--color-border-subtle);
+    }
+
+    .profile-interests-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--space-5);
+    }
+
+    .interest-mini-card {
+        background: var(--color-surface);
+        padding: var(--space-4);
+        border-radius: var(--radius-md);
+        margin-bottom: var(--space-3);
+        border: 1px solid var(--color-border-subtle);
+    }
+
+    .interest-desc-short {
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+        margin: var(--space-2) 0;
+    }
+
+    .link-danger, .link-danger-btn {
+        color: #ff6b6b;
+        font-size: var(--font-size-xs);
+        text-decoration: underline;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0;
+    }
+
+    .author-tag {
+        display: block;
+        font-size: 10px;
+        color: var(--color-primary);
+        margin-top: 4px;
+    }
+
+    .profile-actions-footer {
+        display: flex;
+        gap: var(--space-4);
+        justify-content: center;
+        padding-top: var(--space-4);
+    }
+
+    @media (max-width: 768px) {
+        .profile-header-card { flex-direction: column; text-align: center; }
+        .profile-interests-grid { grid-template-columns: 1fr; }
+    }
 </style>
 
 <script>
@@ -294,5 +422,59 @@
             alert('Произошла ошибка. Попробуйте ещё раз.');
         }
     }
+    const ctx = document.getElementById('oceanChart').getContext('2d');
+    const oceanData = {
+        labels: [
+            'Открытость',
+            'Добросовестность',
+            'Экстраверсия',
+            'Дружелюбие',
+            'Нейротизм'
+        ],
+        datasets: [{
+            label: 'Психологический профиль (OCEAN)',
+            data: [
+                {{ current_user.personality_profile.openness|default(0.5) }},
+                {{ current_user.personality_profile.conscientiousness|default(0.5) }},
+                {{ current_user.personality_profile.extraversion|default(0.5) }},
+                {{ current_user.personality_profile.agreeableness|default(0.5) }},
+                {{ current_user.personality_profile.neuroticism|default(0.5) }}
+            ],
+            fill: true,
+            backgroundColor: 'rgba(54, 162, 235, 0.2)',
+            borderColor: 'rgb(54, 162, 235)',
+            pointBackgroundColor: 'rgb(54, 162, 235)',
+            pointBorderColor: '#fff',
+            pointHoverBackgroundColor: '#fff',
+            pointHoverBorderColor: 'rgb(54, 162, 235)'
+        }]
+    };
+
+    const config = {
+        type: 'radar',
+        data: oceanData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                r: {
+                    angleLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                    suggestedMin: 0,
+                    suggestedMax: 1,
+                    ticks: { display: false },
+                    pointLabels: {
+                        color: '#888', // Цвет подписей вокруг
+                        font: { size: 11 }
+                    }
+                }
+            },
+            plugins: {
+                legend: { display: false } // Прячем легенду, так как у нас есть бары слева
+            }
+        },
+    };
+
+    new Chart(ctx, config);
 </script>
 {% endblock %}

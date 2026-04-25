@@ -6,3 +6,4 @@ from . import favorite_interest
 from . import chat_settings
 from . import report
 from . import knowledge_graph
+from . import ai

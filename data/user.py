@@ -29,6 +29,18 @@ class User(SqlAlchemyBase, UserMixin):
 
     interests = orm.relationship("Interest", back_populates='user')
     messages = orm.relationship("Message", back_populates="author")
+    personality_profile = orm.relationship("UserPersonalityProfile", backref="user", uselist=False, lazy='joined')
+    extracted_interests = orm.relationship("AIExtractedInterests", backref="user", uselist=False)
+    compatibilities_as_user1 = orm.relationship(
+        "UserCompatibility",
+        foreign_keys="UserCompatibility.user_id_1",
+        backref="user1",
+    )
+    compatibilities_as_user2 = orm.relationship(
+        "UserCompatibility",
+        foreign_keys="UserCompatibility.user_id_2",
+        backref="user2",
+    )
 
     
     # Избранные интересы через промежуточную таблицу

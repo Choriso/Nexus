@@ -1,54 +1,37 @@
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
-# 1. Сначала внешние библиотеки
-try:
-    from celery import Celery, Task
-except ImportError:
-    print("Ошибка: Библиотека 'celery' не найдена. Установите: pip install celery")
-    raise
+from celery import Celery, Task
+from dotenv import load_dotenv
+from sqlalchemy import and_, or_
 
-# 2. Твои локальные модули (исправлено под твою структуру)
-from data.user import User
+from app.ai_profiler import get_profiler
+from data.ai import AIExtractedInterests, UserCompatibility, UserPersonalityProfile
 from data.message import Message
-from app.ai.models import UserPersonalityProfile
-from app.ai_profiler.core import AIProfiler
-import os
-from dotenv import load_dotenv # Убедись, что установлен: pip install python-dotenv
 from data.session import create_session, global_init
-import random
+from data.user import User
 
-
-# 1. Загружаем переменные из .env
 load_dotenv()
 
-# 2. Инициализируем БД, используя ту же логику, что и в App.py
-db_url = os.environ.get("DATABASE_URL")
-if db_url:
-    global_init(db_url)
-else:
-    # Fallback, если что-то пошло не так
-    global_init("sqlite:///db/blogs.db")
+db_url = os.environ.get("DATABASE_URL", "sqlite:///chat.db")
+global_init(db_url)
 
 logger = logging.getLogger(__name__)
 
-# 3. Инициализация Celery
-# Теперь берем URL из переменных окружения
 broker_url = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
-celery = Celery('ai_profiler', broker=broker_url, backend=broker_url)
+result_backend = os.environ.get("CELERY_RESULT_BACKEND", broker_url)
+celery = Celery("ai_profiler", broker=broker_url, backend=result_backend)
+celery.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+)
 
-# ... остальной код (DBTask, analyze_user_profile) ...
 
-logger = logging.getLogger(__name__)
-
-# 3. Инициализация Celery
-# Название 'ai_worker' — просто имя процесса
-celery = Celery('ai_profiler')
-
-
-# 4. Класс для работы с БД (чтобы сессии всегда закрывались)
 class DBTask(Task):
-    """Базовый класс для задач, который управляет сессией SQLAlchemy"""
     _db = None
 
     def __call__(self, *args, **kwargs):
@@ -64,96 +47,143 @@ class DBTask(Task):
         return self._db
 
 
-# 5. Главная задача анализа
-@celery.task(base=DBTask, name='ai.analyze_user_profile', bind=True)
-def analyze_user_profile(self, user_id, force=False):
-    """Фоновый анализ профиля через твое Core-ядро"""
-    logger.info(f"Начинаем анализ пользователя {user_id}")
-    db = self.db  # Берем сессию из DBTask
-
+@celery.task(base=DBTask, name="ai.analyze_user_profile", bind=True)
+def analyze_user_profile(self, user_id, force=True):
+    logger.info("Starting user profile analysis for user_id=%s", user_id)
+    db = self.db
+    now_utc = datetime.now(timezone.utc)
     try:
-        # Ищем пользователя
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
-            return {'error': 'User not found'}
+            return {"error": "User not found"}
 
-        # Проверка даты последнего анализа
         profile = db.query(UserPersonalityProfile).filter_by(user_id=user_id).first()
-        if profile and profile.updated_at and not force:
-            # Убеждаемся, что время в одном формате (с таймзоной)
-            last_upd = profile.updated_at.replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) - last_upd < timedelta(hours=1):
-                pass
-                # logger.info(f"Профиль {user_id} обновлялся недавно. Пропуск.")
-                # return {'status': 'skipped'}
+        # if profile and profile.updated_at and not force:
+        #     last_upd = profile.updated_at.replace(tzinfo=timezone.utc)
+        #     if now_utc - last_upd < timedelta(hours=1):
+        #         return {"status": "skipped", "reason": "recent_analysis"}
 
-        # Собираем данные: сообщения пользователя
-        messages = db.query(Message) \
-            .filter_by(author_id=user_id) \
-            .order_by(Message.timestamp.desc()) \
-            .limit(50) \
+        messages = (
+            db.query(Message)
+            .filter_by(author_id=user_id)
+            .order_by(Message.timestamp.desc())
+            .limit(50)
             .all()
-        # Даем последним сообщениям больше веса (просто дублируем их в строке)
-        last_messages = messages[:5]  # берем 5 последних
-        # Внутри analyze_user_profile
+        )
         full_text = " ".join([m.content for m in messages if m.content])
-        # Используй метод очистки, который мы обсуждали
-
-
         if not full_text:
-            return {'error': 'No text data for analysis'}
+            return {"error": "No text data for analysis"}
 
-        # Запуск нейронки из Core
-        profiler = AIProfiler()
-        logger.info(f"Анализирую {len(messages)} сообщений для User {user_id}. Текст: {full_text[50:]}...")
-        clean_full_text = profiler.clean_text(full_text)
-        scores = profiler.analyze_text(clean_full_text)
+        profiler = get_profiler()
+        analysis = profiler.analyze_profile(full_text)
+        ocean = analysis["ocean"]
+        communication = analysis["communication"]
+        extracted = analysis["interests"]
 
-        # Сохранение OCEAN
         if not profile:
             profile = UserPersonalityProfile(user_id=user_id)
             db.add(profile)
 
-        profile.openness = scores[0]
-        profile.conscientiousness = scores[1]
-        profile.extraversion = scores[2]
-        profile.agreeableness = scores[3]
-        profile.neuroticism = scores[4]
-        profile.updated_at = datetime.now(timezone.utc)
+        profile.openness = ocean[0]
+        profile.conscientiousness = ocean[1]
+        profile.extraversion = ocean[2]
+        profile.agreeableness = ocean[3]
+        profile.neuroticism = ocean[4]
+        profile.mbti_type = analysis["mbti_type"]
+        profile.communication_style = communication["communication_style"]
+        profile.formality = communication["formality"]
+        profile.enthusiasm = communication["enthusiasm"]
+        profile.detail_oriented = communication["detail_oriented"]
+        profile.traits = analysis["traits"]
+        profile.values = analysis["values"]
+        profile.compatible_mbti_types = analysis["compatible_mbti_types"]
+        profile.collaboration_style = communication["collaboration_style"]
+        profile.confidence_score = analysis["confidence_score"]
+        profile.last_analyzed = now_utc
+        profile.updated_at = now_utc
+        profile.conversation_count = len(messages)
+
+        extracted_interests = db.query(AIExtractedInterests).filter_by(user_id=user_id).first()
+        if not extracted_interests:
+            extracted_interests = AIExtractedInterests(user_id=user_id)
+            db.add(extracted_interests)
+        extracted_interests.hobbies = extracted.get("hobbies", [])
+        extracted_interests.topics = extracted.get("topics", [])
+        extracted_interests.skills = extracted.get("skills", [])
+        extracted_interests.dislikes = extracted.get("dislikes", [])
+        extracted_interests.occupation = extracted.get("occupation")
+        extracted_interests.work_style = extracted.get("work_style")
+        extracted_interests.short_term_goals = extracted.get("short_term_goals", [])
+        extracted_interests.long_term_goals = extracted.get("long_term_goals", [])
+        extracted_interests.preferences = extracted.get("preferences", {})
+        extracted_interests.last_extraction = now_utc
 
         db.commit()
-        return {'status': 'success', 'user_id': user_id, 'scores': scores}
-
-    except Exception as e:
-        logger.exception(f"Ошибка в анализе пользователя {user_id}: {e}")
+        update_compatibility.delay(user_id)
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "scores": ocean,
+            "mbti_type": profile.mbti_type,
+        }
+    except Exception as exc:
+        logger.exception("Error while analyzing profile for user_id=%s", user_id)
         db.rollback()
-        return {'error': str(e)}
+        return {"error": str(exc)}
 
 
-# 6. Задача на совместимость
-@celery.task(base=DBTask, name='ai.update_compatibility', bind=True)
+@celery.task(base=DBTask, name="ai.update_compatibility", bind=True)
 def update_compatibility(self, user_id):
-    """Обновляет % совпадения с другими людьми"""
     db = self.db
     try:
-        profiler = AIProfiler()
+        profiler = get_profiler()
         my = db.query(UserPersonalityProfile).filter_by(user_id=user_id).first()
-        if not my: return {'error': 'My profile not found'}
+        if not my:
+            return {"error": "My profile not found"}
 
-        my_vec = [my.openness, my.conscientiousness, my.extraversion, my.agreeableness, my.neuroticism]
-
+        my_vec = my.get_big_five_vector()
         others = db.query(UserPersonalityProfile).filter(UserPersonalityProfile.user_id != user_id).all()
-
         for other in others:
-            other_vec = [other.openness, other.conscientiousness, other.extraversion, other.agreeableness,
-                         other.neuroticism]
+            other_vec = other.get_big_five_vector()
             score = profiler.calculate_compatibility(my_vec, other_vec)
-            logger.info(f"Match {user_id} + {other.user_id} = {score}%")
 
-        return {'status': 'success'}
-    except Exception as e:
-        logger.error(f"Error in compatibility: {e}")
-        return {'error': str(e)}
+            compat = (
+                db.query(UserCompatibility)
+                .filter(
+                    or_(
+                        and_(
+                            UserCompatibility.user_id_1 == user_id,
+                            UserCompatibility.user_id_2 == other.user_id,
+                        ),
+                        and_(
+                            UserCompatibility.user_id_1 == other.user_id,
+                            UserCompatibility.user_id_2 == user_id,
+                        ),
+                    )
+                )
+                .first()
+            )
+            if not compat:
+                compat = UserCompatibility(user_id_1=user_id, user_id_2=other.user_id)
+                db.add(compat)
+
+            compat.overall_score = round(score / 100.0, 4)
+            compat.romantic_score = compat.overall_score
+            compat.professional_score = compat.overall_score
+            compat.creative_score = compat.overall_score
+            compat.interest_overlap = compat.overall_score
+            compat.recommendations = {
+                "summary": f"Compatibility between {user_id} and {other.user_id}",
+                "mbti_pair": [my.mbti_type, other.mbti_type],
+            }
+            compat.calculated_at = datetime.now(timezone.utc)
+
+        db.commit()
+        return {"status": "success", "updated": len(others)}
+    except Exception as exc:
+        logger.exception("Error in compatibility update for user_id=%s", user_id)
+        db.rollback()
+        return {"error": str(exc)}
 
 
 
