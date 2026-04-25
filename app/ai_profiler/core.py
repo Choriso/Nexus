@@ -6,7 +6,7 @@ import re
 import numpy as np
 from collections import Counter
 
-# Константы для всего проекта (синхронизировано с train_mbti.py)
+# Константы для всего проекта
 MBTI_TYPES = [
     "INTJ", "INTP", "ENTJ", "ENTP",
     "INFJ", "INFP", "ENFJ", "ENFP",
@@ -16,20 +16,30 @@ MBTI_TYPES = [
 
 
 class PersonalityClassifier(nn.Module):
-    def __init__(self, input_size=388, num_traits=5):
-        super(PersonalityClassifier, self).__init__()
-        self.fc1 = nn.Linear(input_size, 128)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.2)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, num_traits)
+    """Гетероскедастичная модель OCEAN (Big‑5).
+    Выходы: mu (5 значений), logvar (5 значений).
+    """
+    def __init__(self, input_size=388, hidden_dims=[256, 128, 64], dropout=0.3):
+        super().__init__()
+        layers = []
+        prev_dim = input_size
+        for hdim in hidden_dims:
+            layers.append(nn.Linear(prev_dim, hdim))
+            layers.append(nn.BatchNorm1d(hdim))
+            layers.append(nn.ReLU())
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            prev_dim = hdim
+        self.body = nn.Sequential(*layers)
+        self.head_mu = nn.Linear(prev_dim, 5)
+        self.head_logvar = nn.Linear(prev_dim, 5)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.relu(self.fc2(x))
-        return self.sigmoid(self.fc3(x))
+        x = self.body(x)
+        mu = self.sigmoid(self.head_mu(x))
+        logvar = self.head_logvar(x)   # неограниченный log-дисперсии
+        return mu, logvar
 
 
 class MBTIClassifier(nn.Module):
@@ -47,16 +57,19 @@ class MBTIClassifier(nn.Module):
             nn.Linear(128, num_classes),
         )
 
-    def forward(self, x): return self.net(x)
+    def forward(self, x):
+        return self.net(x)
 
 
 class AIProfiler:
     def __init__(self, db=None, use_local_models=True):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.bert_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2', device=self.device)
+        self.bert_model = SentenceTransformer(
+            'paraphrase-multilingual-MiniLM-L12-v2', device=self.device
+        )
         self.mbti_classes = MBTI_TYPES
 
-        self.model = PersonalityClassifier(input_size=388, num_traits=5).to(self.device)
+        self.model = PersonalityClassifier(input_size=388, hidden_dims=[256,128,64], dropout=0.3).to(self.device)
         self.mbti_model = MBTIClassifier(input_size=384, num_classes=len(self.mbti_classes)).to(self.device)
 
         # Динамические пути к артефактам
@@ -65,32 +78,35 @@ class AIProfiler:
         self.mbti_model_path = os.path.join(base_path, "ml/artifacts/mbti_model.pth")
 
         if os.path.exists(self.model_path):
-            self.model.load_state_dict(torch.load(self.model_path, map_location=self.device, weights_only=True))
+            self.model.load_state_dict(
+                torch.load(self.model_path, map_location=self.device, weights_only=True)
+            )
         self.model.eval()
 
         self.has_mbti_model = False
         if os.path.exists(self.mbti_model_path):
             self.mbti_model.load_state_dict(
-                torch.load(self.mbti_model_path, map_location=self.device, weights_only=True))
+                torch.load(self.mbti_model_path, map_location=self.device, weights_only=True)
+            )
             self.has_mbti_model = True
         self.mbti_model.eval()
 
-    def _ocean_to_soft_probs(self, mbti_from_ocean, temperature=0.5):
-        """Конвертирует OCEAN→MBTI в мягкое распределение вместо one-hot."""
-        logits = np.zeros(len(self.mbti_classes), dtype=np.float32)
-        idx = self.mbti_classes.index(mbti_from_ocean)
+    @staticmethod
+    def _ocean_to_soft_probs(mbti_from_ocean, temperature=0.5):
+        """Конвертирует OCEAN→MBTI в мягкое распределение."""
+        logits = np.zeros(len(MBTI_TYPES), dtype=np.float32)
+        idx = MBTI_TYPES.index(mbti_from_ocean)
         logits[idx] = 1.0 / temperature
-
-        for i, t in enumerate(self.mbti_classes):
+        for i, t in enumerate(MBTI_TYPES):
             diff = sum(1 for a, b in zip(t, mbti_from_ocean) if a != b)
-            if diff == 1:  # Соседние типы (разница в 1 букву)
+            if diff == 1:
                 logits[i] = 0.3 / temperature
-
         exp_logits = np.exp(logits - np.max(logits))
         return exp_logits / exp_logits.sum()
 
     def get_manual_features(self, text):
-        if not text: return [0.0, 0.0, 0.0, 0.0]
+        if not text:
+            return [0.0, 0.0, 0.0, 0.0]
         length = min(len(text) / 1000, 1.0)
         letters = [c for c in text if c.isalpha()]
         caps = sum(1 for c in letters if c.isupper()) / (len(letters) + 1) if letters else 0
@@ -101,7 +117,8 @@ class AIProfiler:
     def analyze_profile(self, text):
         """Полный анализ профиля с использованием ансамбля моделей."""
         clean_text = self.clean_text(text)
-        if not clean_text: return None
+        if not clean_text:
+            return None
 
         # 1. OCEAN анализ
         m_feats = self.get_manual_features(text)
@@ -110,34 +127,28 @@ class AIProfiler:
         combined_input = torch.cat([emb, manual_tensor], dim=1)
 
         with torch.no_grad():
-            ocean_prediction = self.model(combined_input).cpu().numpy()[0]
-        ocean_scores = np.clip(ocean_prediction, 0.05, 0.95).tolist()
+            mu, logvar = self.model(combined_input)   # используем только mu
+        ocean_scores = np.clip(mu.cpu().numpy()[0], 0.05, 0.95).tolist()
 
         # 2. MBTI Ансамбль
-        # А) Предикт от модели
         if self.has_mbti_model:
             with torch.no_grad():
                 mbti_logits = self.mbti_model(emb)
                 mbti_probs = torch.softmax(mbti_logits, dim=1).cpu().numpy()[0]
         else:
-            # Если модели нет, используем равномерное распределение
             mbti_probs = np.ones(len(self.mbti_classes)) / len(self.mbti_classes)
 
-        # Б) Предикт от OCEAN (Prior)
         mbti_from_ocean = self.infer_mbti(ocean_scores)
         ocean_soft = self._ocean_to_soft_probs(mbti_from_ocean)
 
-        # В) Смешивание (0.7 модель / 0.3 OCEAN)
         w_model = 0.7 if self.has_mbti_model else 0.3
         blended_probs = (w_model * mbti_probs) + ((1 - w_model) * ocean_soft)
-
         mbti_type = self.mbti_classes[int(np.argmax(blended_probs))]
 
         # 3. Дополнительные метрики
         communication = self.infer_communication_style(text, ocean_scores)
         interests = self.extract_interests(text)
 
-        # Уверенность как среднее между разбросом OCEAN и уверенностью MBTI-модели
         ocean_conf = float(np.mean(np.abs(np.array(ocean_scores) - 0.5)) * 2)
         mbti_conf = float(np.max(blended_probs))
 
@@ -160,7 +171,8 @@ class AIProfiler:
             "F" if a >= 0.5 else "T",
             "J" if c >= 0.5 else "P",
         ]
-        if n > 0.75: mbti[0] = "I"  # Высокий невротизм склоняет к интроверсии
+        if n > 0.75:
+            mbti[0] = "I"
         return "".join(mbti)
 
     def infer_communication_style(self, text, scores):
@@ -270,13 +282,15 @@ class AIProfiler:
         }
 
     def clean_text(self, text):
-        if not text: return ""
+        if not text:
+            return ""
         text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
         text = re.sub(r'[^а-яА-ЯёЁa-zA-Z0-9?!.,\s]', '', text)
         return re.sub(r'\s+', ' ', text).strip()
 
     def calculate_compatibility(self, vec1, vec2):
-        if not vec1 or not vec2: return 0
+        if not vec1 or not vec2:
+            return 0
         v1, v2 = np.array(vec1), np.array(vec2)
         distance = np.sqrt(np.mean((v1 - v2) ** 2))
         return round(float(max(0, 100 * (1 - distance))), 2)
