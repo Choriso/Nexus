@@ -6,6 +6,10 @@ from pathlib import Path
 
 SCORE_COLUMNS = ["openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism"]
 
+def smooth_scores(scores, epsilon=0.2):
+    """Сжимает [0,1] → [epsilon, 1-epsilon]"""
+    return [s * (1 - 2*epsilon) + epsilon for s in scores]
+
 def load_csv(csv_path: Path, weight: float = 1.0) -> list[dict]:
     records = []
     with open(csv_path, newline="", encoding="utf-8") as f:
@@ -13,6 +17,7 @@ def load_csv(csv_path: Path, weight: float = 1.0) -> list[dict]:
         for row in reader:
             # У Kaggle данных обычно значения уже 0-1, просто берем их
             scores = [float(row[col]) for col in SCORE_COLUMNS]
+            scores = smooth_scores(scores)
             records.append({
                 "text": row["cv_text"].strip(),
                 "scores": scores,
@@ -42,7 +47,7 @@ def main():
 
     # 2. Загружаем твои данные (вес 3.0)
     print(f"Загрузка качественного JSON...")
-    quality_records = load_quality_json(Path(args.json), weight=3.0)
+    quality_records = load_quality_json(Path(args.json), weight=10.0)
 
     # 3. Смешиваем
     combined = kaggle_records + quality_records

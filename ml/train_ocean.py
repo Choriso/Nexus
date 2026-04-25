@@ -52,26 +52,13 @@ class PersonalityDataset(Dataset):
 # Ordinal Loss (Cumulative Binary Cross-Entropy)
 # ---------------------------------------------------------------------------
 def ordinal_loss(logits, target_bins):
-    """
-    logits: (batch, num_traits, num_bins) — логиты до softmax
-    target_bins: (batch, num_traits) — индексы бинов 0..num_bins-1
-    """
     B, T, K = logits.shape
-    # Строим кумулятивные метки: P(y_i > k) для k=0..K-2
-    # target_bins: (B, T) -> (B, T, 1) сравнивается с порогами
-    # Для бинарного классификатора для порога k: 1 если target > k
-    cum_targets = (target_bins.unsqueeze(-1) > torch.arange(K-1, device=logits.device)).float()  # (B, T, K-1)
-    # Логиты для кумулятивных вероятностей: берём логиты для всех бинов, кроме последнего?
-    # Ординальная регрессия: модель выдаёт логиты для каждого бина; мы можем интерпретировать их как ненормализованные вероятности P(y = k).
-    # Преобразуем в кумулятивные логиты: P(y > k) = sum_{j>k} P(y = j). Нужно сделать softmax по бинам, затем cumulative.
-    # Стандартный способ: отдельные бинарные классификаторы для каждого порога. Проще сделать так:
-    probs = F.softmax(logits, dim=-1)                     # (B, T, K)
-    cum_probs = torch.cumsum(probs, dim=-1)               # P(y <= k)
-    # Вероятность того, что y > k = 1 - P(y <= k)
-    p_greater = 1.0 - cum_probs[:, :, :-1]                # (B, T, K-1)
-    # Бинарная кросс-энтропия
+    cum_targets = (target_bins.unsqueeze(-1) > torch.arange(K-1, device=logits.device)).float()
+    probs = F.softmax(logits, dim=-1)
+    cum_probs = torch.cumsum(probs, dim=-1)
+    p_greater = (1.0 - cum_probs[:, :, :-1]).clamp(1e-6, 1 - 1e-6)
     loss = F.binary_cross_entropy(p_greater, cum_targets, reduction='none')
-    return loss.mean()
+    return loss.mean(dim=(1, 2))   # → (B,) — per-sample loss
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +133,9 @@ def train_model(train_loader, test_loader, config):
             logits = model(x)                     # (batch, 5, num_bins)
             loss_per_sample = ordinal_loss(logits, target_bins)
             # Взвешиваем samples
-            loss = (loss_per_sample.unsqueeze(0) * weights).mean()
+            loss = (loss_per_sample * weights).mean()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             train_epoch_loss += loss.item()
 
