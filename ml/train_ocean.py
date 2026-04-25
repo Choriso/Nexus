@@ -1,27 +1,26 @@
 """
-train_ocean.py — Обучение PersonalityClassifier (OCEAN) с гетероскедастичной моделью.
+train_ocean.py — Обучение PersonalityClassifier с ординальной классификацией.
 
-Изменения:
-  - Новая архитектура: гетероскедастичная (mu + logvar) с BatchNorm и Dropout.
-  - Loss: Gaussian NLL + опциональный variance-aware penalty.
-  - Поддержка взвешивания примеров (качество / синтетика).
-  - CosineAnnealingWarmRestarts + линейный warmup.
-  - Увеличенная patience и эпохи.
+Нововведения:
+  - Ordinal loss (Cumulative BCE) вместо регрессии.
+  - Веса примеров: 5.0 для качественных, 1.0 для синтетики.
+  - CosineAnnealingWarmRestarts + warmup.
+  - Early Stopping с восстановлением.
 """
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_absolute_error
 import numpy as np
-import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 import random
+import json
 
-from core import PersonalityClassifier  # новый класс из core.py
+from core import PersonalityClassifier, scores_to_bins, NUM_BINS, BIN_EDGES, bins_to_score
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ARTIFACTS_DIR = ROOT_DIR / "ml" / "artifacts"
@@ -29,13 +28,9 @@ ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
-# Датасет (с поддержкой весов примеров)
+# Датасет
 # ---------------------------------------------------------------------------
 class PersonalityDataset(Dataset):
-    """Загружает предвычисленные признаки и цели из .pt файла.
-       Ожидает список словарей с ключами: 'features', 'target', опционально 'weight'.
-       Если 'weight' отсутствует, вес = 1.0.
-    """
     def __init__(self, data_path: str):
         self.data = torch.load(data_path)
         print(f"Загружено {len(self.data)} примеров.")
@@ -46,50 +41,51 @@ class PersonalityDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         features = torch.tensor(item["features"], dtype=torch.float32)
-        target = torch.tensor(item["target"], dtype=torch.float32)
-        weight = item.get("weight", 1.0)   # 3.0 для качественных, 1.0 для синтетики
-        return features, target, weight
+        target = torch.tensor(item["target"], dtype=torch.float32)    # (5,) непрерывные значения
+        weight = item.get("weight", 1.0)
+        # Преобразуем таргет в бины для ординальной классификации
+        target_bins = torch.tensor(scores_to_bins(item["target"], NUM_BINS), dtype=torch.long)  # (5,) индексы
+        return features, target_bins, weight, target  # сохраняем оригинальный target для метрик
 
 
 # ---------------------------------------------------------------------------
-# Функции потерь
+# Ordinal Loss (Cumulative Binary Cross-Entropy)
 # ---------------------------------------------------------------------------
-def gaussian_nll_loss(pred_tuple, target):
+def ordinal_loss(logits, target_bins):
     """
-    Отрицательный логарифм правдоподобия для гауссова распределения.
-    pred_tuple: (mu, logvar) — оба тензора (batch, 5)
+    logits: (batch, num_traits, num_bins) — логиты до softmax
+    target_bins: (batch, num_traits) — индексы бинов 0..num_bins-1
     """
-    mu, logvar = pred_tuple
-    precision = torch.exp(-logvar)
-    loss = precision * (mu - target) ** 2 + logvar
+    B, T, K = logits.shape
+    # Строим кумулятивные метки: P(y_i > k) для k=0..K-2
+    # target_bins: (B, T) -> (B, T, 1) сравнивается с порогами
+    # Для бинарного классификатора для порога k: 1 если target > k
+    cum_targets = (target_bins.unsqueeze(-1) > torch.arange(K-1, device=logits.device)).float()  # (B, T, K-1)
+    # Логиты для кумулятивных вероятностей: берём логиты для всех бинов, кроме последнего?
+    # Ординальная регрессия: модель выдаёт логиты для каждого бина; мы можем интерпретировать их как ненормализованные вероятности P(y = k).
+    # Преобразуем в кумулятивные логиты: P(y > k) = sum_{j>k} P(y = j). Нужно сделать softmax по бинам, затем cumulative.
+    # Стандартный способ: отдельные бинарные классификаторы для каждого порога. Проще сделать так:
+    probs = F.softmax(logits, dim=-1)                     # (B, T, K)
+    cum_probs = torch.cumsum(probs, dim=-1)               # P(y <= k)
+    # Вероятность того, что y > k = 1 - P(y <= k)
+    p_greater = 1.0 - cum_probs[:, :, :-1]                # (B, T, K-1)
+    # Бинарная кросс-энтропия
+    loss = F.binary_cross_entropy(p_greater, cum_targets, reduction='none')
     return loss.mean()
 
 
-def variance_aware_loss(pred_tuple, target, lambda_var=0.2):
-    """
-    Основной NLL + штраф за несовпадение дисперсии предсказаний и целей в батче.
-    """
-    mu, logvar = pred_tuple
-    nll = gaussian_nll_loss((mu, logvar), target)
-    # Дисперсия mu и target в батче (по размерности признаков)
-    pred_var = torch.var(mu, dim=0)      # (5,)
-    target_var = torch.var(target, dim=0)
-    var_loss = torch.mean((pred_var - target_var) ** 2)
-    return nll + lambda_var * var_loss
-
-
 # ---------------------------------------------------------------------------
-# Early Stopping (сохранено как раньше)
+# Early Stopping
 # ---------------------------------------------------------------------------
 class EarlyStopping:
-    def __init__(self, patience: int = 40, min_delta: float = 1e-4):
+    def __init__(self, patience=40, min_delta=1e-4):
         self.patience = patience
         self.min_delta = min_delta
         self.best_r2 = -float("inf")
         self.counter = 0
-        self.best_state: Optional[dict] = None
+        self.best_state = None
 
-    def step(self, r2: float, model: nn.Module) -> bool:
+    def step(self, r2, model):
         if r2 > self.best_r2 + self.min_delta:
             self.best_r2 = r2
             self.counter = 0
@@ -98,97 +94,85 @@ class EarlyStopping:
             self.counter += 1
         return self.counter >= self.patience
 
-    def restore_best(self, model: nn.Module) -> None:
+    def restore_best(self, model):
         if self.best_state is not None:
             model.load_state_dict(self.best_state)
             print(f"  [EarlyStopping] Восстановлены веса с лучшим R2={self.best_r2:.4f}")
 
 
 # ---------------------------------------------------------------------------
-# Главная функция обучения
+# Обучение
 # ---------------------------------------------------------------------------
 def train_model(train_loader, test_loader, config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = PersonalityClassifier(input_size=388, hidden_dims=config.get("hidden_dims", [256, 128, 64]),
-                                  dropout=config.get("dropout", 0.3)).to(device)
+    model = PersonalityClassifier(
+        input_size=388,
+        hidden_dims=config.get("hidden_dims", [256, 128, 64]),
+        dropout=config.get("dropout", 0.3),
+        num_bins=NUM_BINS
+    ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.get("lr", 0.001))
-
-    # --- Планировщик Cosine Annealing с теплым стартом ---
-    T_0 = config.get("T_0", 15)          # период первого перезапуска
-    T_mult = config.get("T_mult", 2)     # множитель периода
+    T_0 = config.get("T_0", 15)
+    T_mult = config.get("T_mult", 2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=T_0, T_mult=T_mult, eta_min=config.get("min_lr", 1e-6)
     )
-
-    # --- Линейный warmup (первые warmup_epochs эпох) ---
     warmup_epochs = config.get("warmup_epochs", 5)
     base_lr = config.get("lr", 0.001)
 
-    # --- Early Stopping ---
-    early_stopping = EarlyStopping(
-        patience=config.get("es_patience", 40),
-        min_delta=config.get("es_min_delta", 1e-4)
-    )
-
-    criterion = variance_aware_loss  # можно сменить на gaussian_nll_loss, убрав lambda_var=0
+    early_stopping = EarlyStopping(patience=config.get("es_patience", 40))
     epochs = config.get("epochs", 200)
     traits = ["O", "C", "E", "A", "N"]
     history = {"train_loss": [], "test_loss": [], "r2_scores": [], "lr": []}
     best_r2 = -float("inf")
 
     print(f"Конфиг: lr={base_lr}, epochs={epochs}, batch={config.get('batch_size', 32)}, "
-          f"hidden_dims={config.get('hidden_dims', [256,128,64])}\n")
+          f"hidden_dims={config.get('hidden_dims')}, ordinal bins={NUM_BINS}\n")
 
     for epoch in range(epochs):
-        # --- Warmup learning rate ---
+        # Warmup
         if epoch < warmup_epochs:
             lr = base_lr * (epoch + 1) / warmup_epochs
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
 
-        # --- Train ---
+        # --- TRAIN ---
         model.train()
         train_epoch_loss = 0.0
-        for x, y, w in train_loader:
-            x, y, w = x.to(device), y.to(device), w.to(device).unsqueeze(1)  # w: (batch,1)
+        for x, target_bins, weights, _ in train_loader:
+            x, target_bins, weights = x.to(device), target_bins.to(device), weights.to(device)
             optimizer.zero_grad()
-            pred = model(x)                     # (mu, logvar)
-            loss_per_sample = variance_aware_loss(pred, y)  # среднее по всем, но мы хотим взвесить
-            # Взвешивание: умножаем средний loss на веса (приближённо, т.к. loss уже средний по батчу)
-            # Чтобы точно взвесить, пересчитаем loss без усреднения
-            mu, logvar = pred
-            precision = torch.exp(-logvar)
-            nll_per_sample = (precision * (mu - y) ** 2 + logvar).mean(dim=1)  # (batch,)
-            # var_loss тоже нужно взвесить? Просто добавляем к взвешенному NLL
-            pred_var = torch.var(mu, dim=0)
-            target_var = torch.var(y, dim=0)
-            var_loss = torch.mean((pred_var - target_var) ** 2)
-            loss = (nll_per_sample * w.squeeze(1)).mean() + config.get("lambda_var", 0.2) * var_loss
-
+            logits = model(x)                     # (batch, 5, num_bins)
+            loss_per_sample = ordinal_loss(logits, target_bins)
+            # Взвешиваем samples
+            loss = (loss_per_sample.unsqueeze(0) * weights).mean()
             loss.backward()
             optimizer.step()
             train_epoch_loss += loss.item()
 
-        # --- Шаг Cosine Annealing (после warmup) ---
         if epoch >= warmup_epochs:
-            scheduler.step(epoch - warmup_epochs)  # передаём номер эпохи относительно первого перезапуска
+            scheduler.step(epoch - warmup_epochs)
 
-        # --- Eval ---
+        # --- EVAL ---
         model.eval()
         test_epoch_loss = 0.0
-        all_mu, all_targets = [], []
+        all_preds, all_targets = [], []
         with torch.no_grad():
-            for x, y, w in test_loader:
-                x, y = x.to(device), y.to(device)
-                mu, logvar = model(x)
-                # Loss для статистики (без весов, для оценки)
-                loss = gaussian_nll_loss((mu, logvar), y)
+            for x, target_bins, _, orig_targets in test_loader:
+                x = x.to(device)
+                target_bins = target_bins.to(device)
+                logits = model(x)
+                loss = ordinal_loss(logits, target_bins)
                 test_epoch_loss += loss.item()
-                all_mu.append(mu.cpu().numpy())
-                all_targets.append(y.cpu().numpy())
 
-        preds_np = np.vstack(all_mu)
+                # Преобразуем в непрерывные предикты
+                probs = F.softmax(logits, dim=-1)   # (batch, 5, num_bins)
+                scores = bins_to_score(probs)        # (batch, 5)
+                all_preds.append(scores.cpu().numpy())
+                all_targets.append(orig_targets.numpy())
+
+        preds_np = np.vstack(all_preds)
         targets_np = np.vstack(all_targets)
 
         avg_train = train_epoch_loss / len(train_loader)
@@ -215,8 +199,7 @@ def train_model(train_loader, test_loader, config):
                   f"DirAcc: {dir_acc:.2%} | Loss: {avg_test:.4f} | LR: {cur_lr:.2e}")
 
         if early_stopping.step(r2, model):
-            print(f"\n[EarlyStopping] Остановка на эпохе {epoch}. "
-                  f"R2 не улучшался {early_stopping.patience} эпох.")
+            print(f"\n[EarlyStopping] Остановка на эпохе {epoch}.")
             early_stopping.restore_best(model)
             break
 
@@ -231,16 +214,13 @@ def train_model(train_loader, test_loader, config):
     return model
 
 
-# ---------------------------------------------------------------------------
-# Вспомогательные функции
-# ---------------------------------------------------------------------------
 def plot_training_results(history):
     if not history["train_loss"]:
         return
     fig, axes = plt.subplots(1, 3, figsize=(16, 4))
     axes[0].plot(history["train_loss"], label="Train")
     axes[0].plot(history["test_loss"], label="Test")
-    axes[0].set_title("Loss (Gaussian NLL)")
+    axes[0].set_title("Ordinal BCE Loss")
     axes[0].set_xlabel("Epoch")
     axes[0].legend()
     axes[1].plot(history["r2_scores"], color="green")
@@ -248,7 +228,7 @@ def plot_training_results(history):
     axes[1].set_title(f"R² Score (best: {max(history['r2_scores']):.4f})")
     axes[1].set_xlabel("Epoch")
     axes[2].plot(history["lr"], color="orange")
-    axes[2].set_title("Learning Rate (CosineAnnealing)")
+    axes[2].set_title("LR (Cosine Annealing)")
     axes[2].set_xlabel("Epoch")
     axes[2].set_yscale("log")
     plt.tight_layout()
@@ -264,13 +244,10 @@ def save_artifacts(model_obj):
     return target
 
 
-# ---------------------------------------------------------------------------
-# Точка входа
-# ---------------------------------------------------------------------------
 def main():
     cache_path = "data/train_data_precomputed.pt"
     if not Path(cache_path).exists():
-        print(f"❌ Ошибка: Файл {cache_path} не найден!")
+        print(f"❌ Файл {cache_path} не найден!")
         return
 
     full_dataset = PersonalityDataset(cache_path)
@@ -293,7 +270,6 @@ def main():
         "warmup_epochs": 5,
         "es_patience": 40,
         "es_min_delta": 1e-4,
-        "lambda_var": 0.2,          # коэффициент variance-aware штрафа
     }
 
     train_loader = DataLoader(train_ds, batch_size=config["batch_size"], shuffle=True)

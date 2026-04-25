@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer, util
 import os
 import re
 import numpy as np
 from collections import Counter
 
-# Константы для всего проекта
 MBTI_TYPES = [
     "INTJ", "INTP", "ENTJ", "ENTP",
     "INFJ", "INFP", "ENFJ", "ENFP",
@@ -14,12 +14,39 @@ MBTI_TYPES = [
     "ISTP", "ISFP", "ESTP", "ESFP",
 ]
 
+# ---------------------------------------------------------------
+# Конфигурация ординальной классификации
+# ---------------------------------------------------------------
+NUM_BINS = 5                     # количество уровней для каждой черты
+BIN_EDGES = np.linspace(0, 1, NUM_BINS + 1)[1:-1]   # пороги: [0.2, 0.4, 0.6, 0.8]
+# Для K бинов требуется K-1 порогов (бинарные классификаторы)
+
+
+def scores_to_bins(y, num_bins=NUM_BINS):
+    """
+    Преобразует непрерывную оценку [0,1] в индекс бина 0..num_bins-1.
+    Использует равномерное разбиение. Для краевых случаев (ровно граница) сдвигаем чуть-чуть.
+    """
+    y = np.clip(y, 0.0, 1.0)
+    bins = np.digitize(y, BIN_EDGES, right=False)   # 0..num_bins-1
+    return bins.astype(np.int64)
+
+
+def bins_to_score(bin_probs):
+    """
+    bin_probs: (batch, num_traits, num_bins) — вероятности после softmax по последней оси.
+    Возвращает ожидаемое значение: sum(p_i * center_i).
+    """
+    centers = torch.tensor([0.1, 0.3, 0.5, 0.7, 0.9], dtype=bin_probs.dtype, device=bin_probs.device)
+    return (bin_probs * centers).sum(dim=-1)
+
 
 class PersonalityClassifier(nn.Module):
-    """Гетероскедастичная модель OCEAN (Big‑5).
-    Выходы: mu (5 значений), logvar (5 значений).
     """
-    def __init__(self, input_size=388, hidden_dims=[256, 128, 64], dropout=0.3):
+    Ординальный классификатор: для каждой из 5 черт предсказывает NUM_BINS логитов.
+    Во время инференса можно вернуть распределение по бинам или точечную оценку.
+    """
+    def __init__(self, input_size=388, hidden_dims=[256, 128, 64], num_traits=5, num_bins=NUM_BINS, dropout=0.3):
         super().__init__()
         layers = []
         prev_dim = input_size
@@ -31,15 +58,26 @@ class PersonalityClassifier(nn.Module):
                 layers.append(nn.Dropout(dropout))
             prev_dim = hdim
         self.body = nn.Sequential(*layers)
-        self.head_mu = nn.Linear(prev_dim, 5)
-        self.head_logvar = nn.Linear(prev_dim, 5)
-        self.sigmoid = nn.Sigmoid()
+        self.head = nn.Linear(prev_dim, num_traits * num_bins)   # 5 * NUM_BINS логитов
+        self.num_traits = num_traits
+        self.num_bins = num_bins
 
-    def forward(self, x):
+    def forward(self, x, return_probs=False):
         x = self.body(x)
-        mu = self.sigmoid(self.head_mu(x))
-        logvar = self.head_logvar(x)   # неограниченный log-дисперсии
-        return mu, logvar
+        logits = self.head(x)                          # (batch, num_traits * num_bins)
+        logits = logits.view(-1, self.num_traits, self.num_bins)  # (batch, 5, num_bins)
+        if return_probs:
+            return F.softmax(logits, dim=-1)
+        return logits
+
+    def predict_scores(self, x):
+        """Используется в AIProfiler для получения непрерывных оценок."""
+        self.eval()
+        with torch.no_grad():
+            logits = self.forward(x)                  # (1, 5, num_bins)
+            probs = F.softmax(logits, dim=-1)
+            scores = bins_to_score(probs)             # (1, 5)
+        return scores.squeeze(0).cpu().numpy()
 
 
 class MBTIClassifier(nn.Module):
@@ -64,15 +102,12 @@ class MBTIClassifier(nn.Module):
 class AIProfiler:
     def __init__(self, db=None, use_local_models=True):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.bert_model = SentenceTransformer(
-            'paraphrase-multilingual-MiniLM-L12-v2', device=self.device
-        )
+        self.bert_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2', device=self.device)
         self.mbti_classes = MBTI_TYPES
 
-        self.model = PersonalityClassifier(input_size=388, hidden_dims=[256,128,64], dropout=0.3).to(self.device)
+        self.model = PersonalityClassifier(input_size=388, num_bins=NUM_BINS).to(self.device)
         self.mbti_model = MBTIClassifier(input_size=384, num_classes=len(self.mbti_classes)).to(self.device)
 
-        # Динамические пути к артефактам
         base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.model_path = os.path.join(base_path, "ml/artifacts/personality_model_best.pth")
         self.mbti_model_path = os.path.join(base_path, "ml/artifacts/mbti_model.pth")
@@ -115,22 +150,20 @@ class AIProfiler:
         return [length, caps, excl, ques]
 
     def analyze_profile(self, text):
-        """Полный анализ профиля с использованием ансамбля моделей."""
         clean_text = self.clean_text(text)
         if not clean_text:
             return None
 
-        # 1. OCEAN анализ
+        # OCEAN через predict_scores
         m_feats = self.get_manual_features(text)
         emb = self.bert_model.encode([clean_text.lower()], convert_to_tensor=True)
         manual_tensor = torch.tensor(m_feats, dtype=torch.float32).to(self.device).unsqueeze(0)
         combined_input = torch.cat([emb, manual_tensor], dim=1)
 
-        with torch.no_grad():
-            mu, logvar = self.model(combined_input)   # используем только mu
-        ocean_scores = np.clip(mu.cpu().numpy()[0], 0.05, 0.95).tolist()
+        ocean_scores = self.model.predict_scores(combined_input)
+        ocean_scores = np.clip(ocean_scores, 0.05, 0.95).tolist()
 
-        # 2. MBTI Ансамбль
+        # MBTI ансамбль и остальное без изменений
         if self.has_mbti_model:
             with torch.no_grad():
                 mbti_logits = self.mbti_model(emb)
@@ -145,7 +178,6 @@ class AIProfiler:
         blended_probs = (w_model * mbti_probs) + ((1 - w_model) * ocean_soft)
         mbti_type = self.mbti_classes[int(np.argmax(blended_probs))]
 
-        # 3. Дополнительные метрики
         communication = self.infer_communication_style(text, ocean_scores)
         interests = self.extract_interests(text)
 
