@@ -41,29 +41,28 @@ def load_dataset(json_path: str = "data/train_data.json") -> list[dict]:
 # Dataset / Augmentation
 # ---------------------------------------------------------------------------
 
+# 1. Изменяем класс Dataset, чтобы он просто отдавал готовые тензоры
 class PersonalityDataset(Dataset):
-    def __init__(self, data: list[dict], profiler: AIProfiler):
-        self.data = data
-        self.profiler = profiler
+    def __init__(self, data_path: str):
+        # Загружаем всё сразу в оперативку (у тебя 32 ГБ, это легко влезет!)
+        self.data = torch.load(data_path)
+        print(f"Загружено {len(self.data)} кешированных примеров.")
 
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx):
         item = self.data[idx]
-        raw_text = item["text"]
+        # features уже 388 (384 + 4), просто превращаем в тензор
+        features = torch.tensor(item["features"], dtype=torch.float32)
+        target = torch.tensor(item["target"], dtype=torch.float32)
+        return features, target
 
-        clean_text = self.profiler.clean_text(raw_text).lower()
-        emb = self.profiler.bert_model.encode(clean_text)
-        emb_tensor = torch.tensor(emb, dtype=torch.float32)
 
-        m_feats = self.profiler.get_manual_features(raw_text)
-        m_feats_tensor = torch.tensor(m_feats, dtype=torch.float32)
+# 2. В функции main меняем способ загрузки
 
-        # 384 + 4 = 388
-        combined_input = torch.cat((emb_tensor, m_feats_tensor), dim=0)
-        return combined_input, torch.tensor(item["target"], dtype=torch.float32)
 
+# ... далее код создания модели и цикла обучения остается прежним ...
 
 def augment_text(text: str, scores: list[float]) -> str:
     """Лёгкая аугментация на основе экстраверсии и добросовестности."""
@@ -95,17 +94,17 @@ class EarlyStopping:
     """
 
     def __init__(self, patience: int = 15, min_delta: float = 1e-4):
-        self.patience  = patience
+        self.patience = patience
         self.min_delta = min_delta
-        self.best_r2   = -float("inf")
-        self.counter   = 0
+        self.best_r2 = -float("inf")
+        self.counter = 0
         self.best_state: Optional[dict] = None
 
     def step(self, r2: float, model: nn.Module) -> bool:
         """Возвращает True если нужно остановить обучение."""
         if r2 > self.best_r2 + self.min_delta:
-            self.best_r2    = r2
-            self.counter    = 0
+            self.best_r2 = r2
+            self.counter = 0
             # Сохраняем копию весов (без записи на диск)
             self.best_state = {k: v.clone() for k, v in model.state_dict().items()}
         else:
@@ -124,23 +123,9 @@ class EarlyStopping:
 # Основная функция обучения
 # ---------------------------------------------------------------------------
 
-def train_model(dataset_raw: Any, config: Dict[str, Any]) -> nn.Module:
-    device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    profiler = AIProfiler()
-
-    train_data, test_data = train_test_split(dataset_raw, test_size=0.2, random_state=42)
-
-    train_loader = DataLoader(
-        PersonalityDataset(train_data, profiler),
-        batch_size=config.get("batch_size", 16),
-        shuffle=True,
-    )
-    test_loader = DataLoader(
-        PersonalityDataset(test_data, profiler),
-        batch_size=config.get("batch_size", 16),
-        shuffle=False,
-    )
-
+# 1. Изменяем аргументы train_model
+def train_model(train_loader: DataLoader, test_loader: DataLoader, config: Dict[str, Any]) -> nn.Module:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = PersonalityClassifier(input_size=388, num_traits=5).to(device)
 
     optimizer = torch.optim.Adam(
@@ -157,7 +142,6 @@ def train_model(dataset_raw: Any, config: Dict[str, Any]) -> nn.Module:
         factor=config.get("lr_factor", 0.5),
         patience=config.get("lr_patience", 8),
         min_lr=config.get("min_lr", 1e-5),
-        verbose=True,
     )
 
     # --- Early Stopping ---
@@ -167,12 +151,11 @@ def train_model(dataset_raw: Any, config: Dict[str, Any]) -> nn.Module:
     )
 
     criterion = weighted_mse_loss
-    epochs    = config.get("epochs", 80)
-    traits    = ["O", "C", "E", "A", "N"]
-    history   = {"train_loss": [], "test_loss": [], "r2_scores": [], "lr": []}
-    best_r2   = -float("inf")
+    epochs = config.get("epochs", 80)
+    traits = ["O", "C", "E", "A", "N"]
+    history = {"train_loss": [], "test_loss": [], "r2_scores": [], "lr": []}
+    best_r2 = -float("inf")
 
-    print(f"Старт: {len(train_data)} обучающих / {len(test_data)} тестовых примеров.")
     print(f"Конфиг: lr={config.get('lr', 0.001)}, epochs={epochs}, "
           f"es_patience={config.get('es_patience', 15)}, "
           f"lr_patience={config.get('lr_patience', 8)}\n")
@@ -197,21 +180,21 @@ def train_model(dataset_raw: Any, config: Dict[str, Any]) -> nn.Module:
         with torch.no_grad():
             for x, y in test_loader:
                 x, y = x.to(device), y.to(device)
-                pred  = model(x)
+                pred = model(x)
                 test_epoch_loss += criterion(pred, y).item()
                 all_preds.append(pred.cpu().numpy())
                 all_targets.append(y.cpu().numpy())
 
-        preds_np   = np.vstack(all_preds)
+        preds_np = np.vstack(all_preds)
         targets_np = np.vstack(all_targets)
 
         avg_train = train_epoch_loss / len(train_loader)
-        avg_test  = test_epoch_loss  / len(test_loader)
-        r2        = r2_score(targets_np, preds_np)
-        r2_ind    = r2_score(targets_np, preds_np, multioutput="raw_values")
-        mae       = mean_absolute_error(targets_np, preds_np)
-        dir_acc   = np.mean((preds_np > 0.5) == (targets_np > 0.5))
-        cur_lr    = optimizer.param_groups[0]["lr"]
+        avg_test = test_epoch_loss / len(test_loader)
+        r2 = r2_score(targets_np, preds_np)
+        r2_ind = r2_score(targets_np, preds_np, multioutput="raw_values")
+        mae = mean_absolute_error(targets_np, preds_np)
+        dir_acc = np.mean((preds_np > 0.5) == (targets_np > 0.5))
+        cur_lr = optimizer.param_groups[0]["lr"]
 
         history["train_loss"].append(avg_train)
         history["test_loss"].append(avg_test)
@@ -248,7 +231,7 @@ def train_model(dataset_raw: Any, config: Dict[str, Any]) -> nn.Module:
     # Финальный анализ разброса
     print("\n--- АНАЛИЗ РАЗБРОСА (STDEV) ---")
     for i, trait in enumerate(traits):
-        pred_std   = np.std(preds_np[:, i])
+        pred_std = np.std(preds_np[:, i])
         target_std = np.std(targets_np[:, i])
         print(f"  Черта {trait}: Предсказано STD={pred_std:.3f} | В данных STD={target_std:.3f}")
 
@@ -266,7 +249,7 @@ def plot_training_results(history: dict) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(16, 4))
 
     axes[0].plot(history["train_loss"], label="Train")
-    axes[0].plot(history["test_loss"],  label="Test")
+    axes[0].plot(history["test_loss"], label="Test")
     axes[0].set_title("Weighted MSE Loss")
     axes[0].set_xlabel("Epoch")
     axes[0].legend()
@@ -297,30 +280,44 @@ def save_artifacts(model_obj: nn.Module) -> Path:
 # ---------------------------------------------------------------------------
 # Точка входа
 # ---------------------------------------------------------------------------
-
 def main() -> None:
-    dataset = load_dataset("data/train_data.json")
+    cache_path = "data/train_data_precomputed.pt"
+
+    if not Path(cache_path).exists():
+        print(f"❌ Ошибка: Файл {cache_path} не найден!")
+        return
+
+    # Загружаем кешированные данные
+    full_dataset = PersonalityDataset(cache_path)
+
+    # Разделяем на train/test
+    train_size = int(0.8 * len(full_dataset))
+    test_size = len(full_dataset) - train_size
+    train_ds, test_ds = torch.utils.data.random_split(full_dataset, [train_size, test_size],
+                                                      generator=torch.Generator().manual_seed(42))
+
+    # Создаем лоадеры здесь и передаем их в функцию
+
 
     config = {
-        "lr":           0.001,
-        "epochs":       120,       # больше эпох — Early Stopping сам остановит
-        "batch_size":   16,
-
-        # ReduceLROnPlateau
-        "lr_factor":    0.5,       # умножаем LR на 0.5 при плато
-        "lr_patience":  8,         # ждём 8 эпох без улучшения test_loss
-        "min_lr":       1e-5,      # нижняя граница LR
-
-        # Early Stopping
-        "es_patience":  15,        # ждём 15 эпох без улучшения R2
-        "es_min_delta": 1e-4,      # минимальное значимое улучшение R2
+        "lr": 0.001,
+        "epochs": 120,
+        "batch_size": 32,  # На FAIDAI смело ставим 32
+        "lr_factor": 0.5,
+        "lr_patience": 8,
+        "min_lr": 1e-5,
+        "es_patience": 15,
+        "es_min_delta": 1e-4,
     }
+    train_loader = DataLoader(train_ds, batch_size=config.get("batch_size", 32), shuffle=True)
+    test_loader = DataLoader(test_ds, batch_size=config.get("batch_size", 32))
+    # ПЕРЕДАЕМ ЛОАДЕРЫ НАПРЯМУЮ
+    model_obj = train_model(train_loader, test_loader, config)
 
-    model_obj = train_model(dataset, config)
     if model_obj:
         save_artifacts(model_obj)
 
-    print("\nВсе процессы завершены.")
+    print("\n✅ Обучение на FAIDAI (GTX 750 Ti) завершено.")
 
 
 if __name__ == "__main__":
