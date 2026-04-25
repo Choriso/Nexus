@@ -17,7 +17,7 @@ MBTI_TYPES = [
 # ---------------------------------------------------------------
 # Конфигурация ординальной классификации
 # ---------------------------------------------------------------
-NUM_BINS = 5                     # количество уровней для каждой черты
+NUM_BINS = 10                    # количество уровней для каждой черты
 BIN_EDGES = np.linspace(0, 1, NUM_BINS + 1)[1:-1]   # пороги: [0.2, 0.4, 0.6, 0.8]
 # Для K бинов требуется K-1 порогов (бинарные классификаторы)
 
@@ -42,33 +42,35 @@ def bins_to_score(bin_probs):
 
 
 class PersonalityClassifier(nn.Module):
-    """
-    Ординальный классификатор: для каждой из 5 черт предсказывает NUM_BINS логитов.
-    Во время инференса можно вернуть распределение по бинам или точечную оценку.
-    """
-    def __init__(self, input_size=388, hidden_dims=[256, 128, 64], num_traits=5, num_bins=NUM_BINS, dropout=0.3):
+    def __init__(self, input_size=388, hidden_dims=[256, 128, 64], dropout=0.3, num_bins=5):
         super().__init__()
-        layers = []
-        prev_dim = input_size
-        for hdim in hidden_dims:
-            layers.append(nn.Linear(prev_dim, hdim))
-            layers.append(nn.BatchNorm1d(hdim))
-            layers.append(nn.ReLU())
-            if dropout > 0:
-                layers.append(nn.Dropout(dropout))
-            prev_dim = hdim
-        self.body = nn.Sequential(*layers)
-        self.head = nn.Linear(prev_dim, num_traits * num_bins)   # 5 * NUM_BINS логитов
-        self.num_traits = num_traits
         self.num_bins = num_bins
+        layers = []
+        curr_dim = input_size
 
-    def forward(self, x, return_probs=False):
-        x = self.body(x)
-        logits = self.head(x)                          # (batch, num_traits * num_bins)
-        logits = logits.view(-1, self.num_traits, self.num_bins)  # (batch, 5, num_bins)
-        if return_probs:
-            return F.softmax(logits, dim=-1)
-        return logits
+        for h_dim in hidden_dims:
+            layers.append(nn.Linear(curr_dim, h_dim))
+            # Заменяем BatchNorm на LayerNorm для сохранения вариативности
+            layers.append(nn.LayerNorm(h_dim))
+            layers.append(nn.GELU())
+            layers.append(nn.Dropout(dropout))
+            curr_dim = h_dim
+
+        self.feature_extractor = nn.Sequential(*layers)
+        # Выход: 5 черт * количество бинов
+        self.classifier = nn.Linear(hidden_dims[-1], 5 * num_bins)
+
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        logits = self.classifier(features)
+        return logits.view(-1, 5, self.num_bins)
+
+
+def bins_to_score(logits):
+    """Конвертирует логиты в число [0, 1] через матожидание."""
+    probs = F.softmax(logits, dim=-1)
+    bin_values = torch.linspace(0.1, 0.9, logits.shape[-1], device=logits.device)
+    return (probs * bin_values).sum(dim=-1)
 
     def predict_scores(self, x):
         """Используется в AIProfiler для получения непрерывных оценок."""

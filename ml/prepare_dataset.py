@@ -6,7 +6,7 @@ from pathlib import Path
 
 SCORE_COLUMNS = ["openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism"]
 
-def smooth_scores(scores, epsilon=0.2):
+def smooth_scores(scores, epsilon=0.1):
     """Сжимает [0,1] → [epsilon, 1-epsilon]"""
     return [s * (1 - 2*epsilon) + epsilon for s in scores]
 

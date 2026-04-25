@@ -51,40 +51,50 @@ class PersonalityDataset(Dataset):
 # ---------------------------------------------------------------------------
 # Ordinal Loss (Cumulative Binary Cross-Entropy)
 # ---------------------------------------------------------------------------
-def ordinal_loss(logits, target_bins):
+def ordinal_loss_with_std(logits, target_bins, sample_weights, beta=0.5):
     B, T, K = logits.shape
-    cum_targets = (target_bins.unsqueeze(-1) > torch.arange(K-1, device=logits.device)).float()
+    device = logits.device
+
+    # 1. Базовый кумулятивный BCE лосс
+    cum_targets = (target_bins.unsqueeze(-1) > torch.arange(K - 1, device=device)).float()
     probs = F.softmax(logits, dim=-1)
     cum_probs = torch.cumsum(probs, dim=-1)
-    p_greater = (1.0 - cum_probs[:, :, :-1]).clamp(1e-6, 1 - 1e-6)
-    loss = F.binary_cross_entropy(p_greater, cum_targets, reduction='none')
-    return loss.mean(dim=(1, 2))   # → (B,) — per-sample loss
+    p_greater = (1.0 - cum_probs[:, :, :-1]).clamp(1e-6, 1.0 - 1e-6)
+
+    bce_loss = F.binary_cross_entropy(p_greater, cum_targets, reduction='none')
+    main_loss = (bce_loss.mean(dim=(1, 2)) * sample_weights).mean()
+
+    # 2. Штраф за низкую дисперсию (Batch STD Penalty)
+    pred_scores = bins_to_score(logits)  # (B, 5)
+    batch_std = pred_scores.std(dim=0).mean()  # Средний STD по всем чертам в батче
+
+    # Мы хотим, чтобы STD был хотя бы 0.2
+    target_std = 0.20
+    std_penalty = torch.relu(target_std - batch_std)
+
+    return main_loss + beta * std_penalty, batch_std.item()
 
 
 # ---------------------------------------------------------------------------
 # Early Stopping
 # ---------------------------------------------------------------------------
 class EarlyStopping:
-    def __init__(self, patience=40, min_delta=1e-4):
+    def __init__(self, patience=60, min_delta=0.001):
         self.patience = patience
         self.min_delta = min_delta
-        self.best_r2 = -float("inf")
+        self.best_loss = float("inf") # Теперь следим за лоссом
         self.counter = 0
         self.best_state = None
 
-    def step(self, r2, model):
-        if r2 > self.best_r2 + self.min_delta:
-            self.best_r2 = r2
+    def step(self, current_loss, model):
+        # Лосс должен уменьшаться
+        if current_loss < self.best_loss - self.min_delta:
+            self.best_loss = current_loss
             self.counter = 0
             self.best_state = {k: v.clone() for k, v in model.state_dict().items()}
         else:
             self.counter += 1
         return self.counter >= self.patience
-
-    def restore_best(self, model):
-        if self.best_state is not None:
-            model.load_state_dict(self.best_state)
-            print(f"  [EarlyStopping] Восстановлены веса с лучшим R2={self.best_r2:.4f}")
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +141,7 @@ def train_model(train_loader, test_loader, config):
             x, target_bins, weights = x.to(device), target_bins.to(device), weights.to(device)
             optimizer.zero_grad()
             logits = model(x)                     # (batch, 5, num_bins)
-            loss_per_sample = ordinal_loss(logits, target_bins)
+            loss_per_sample = ordinal_loss_with_std(logits, target_bins)
             # Взвешиваем samples
             loss = (loss_per_sample * weights).mean()
             loss.backward()
@@ -151,7 +161,7 @@ def train_model(train_loader, test_loader, config):
                 x = x.to(device)
                 target_bins = target_bins.to(device)
                 logits = model(x)
-                loss = ordinal_loss(logits, target_bins)
+                loss = ordinal_loss_with_std(logits, target_bins)
                 test_epoch_loss += loss.item()
 
                 # Преобразуем в непрерывные предикты
@@ -247,7 +257,7 @@ def main():
     )
 
     config = {
-        "lr": 0.001,
+        "lr": 5e-4,
         "epochs": 200,
         "batch_size": 32,
         "hidden_dims": [256, 128, 64],
@@ -256,7 +266,7 @@ def main():
         "T_mult": 2,
         "min_lr": 1e-6,
         "warmup_epochs": 5,
-        "es_patience": 40,
+        "es_patience": 60,
         "es_min_delta": 1e-4,
     }
 
