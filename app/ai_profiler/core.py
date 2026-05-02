@@ -17,32 +17,30 @@ MBTI_TYPES = [
 # ---------------------------------------------------------------
 # Конфигурация ординальной классификации
 # ---------------------------------------------------------------
-NUM_BINS = 10                    # количество уровней для каждой черты
-BIN_EDGES = np.linspace(0, 1, NUM_BINS + 1)[1:-1]   # пороги: [0.2, 0.4, 0.6, 0.8]
-# Для K бинов требуется K-1 порогов (бинарные классификаторы)
 
+# Константы
+NUM_BINS = 10
+BIN_EDGES = np.linspace(0, 1, NUM_BINS + 1)[1:-1]
 
 def scores_to_bins(y, num_bins=NUM_BINS):
-    """
-    Преобразует непрерывную оценку [0,1] в индекс бина 0..num_bins-1.
-    Использует равномерное разбиение. Для краевых случаев (ровно граница) сдвигаем чуть-чуть.
-    """
     y = np.clip(y, 0.0, 1.0)
-    bins = np.digitize(y, BIN_EDGES, right=False)   # 0..num_bins-1
+    # digitize возвращает индекс бина от 0 до num_bins-1
+    bins = np.digitize(y, BIN_EDGES, right=False)
     return bins.astype(np.int64)
 
-
-def bins_to_score(bin_probs):
+def bins_to_score(logits):
     """
-    bin_probs: (batch, num_traits, num_bins) — вероятности после softmax по последней оси.
-    Возвращает ожидаемое значение: sum(p_i * center_i).
+    Конвертирует логиты в число [0, 1] через матожидание.
+    Работает динамически для любого количества бинов.
     """
-    centers = torch.tensor([0.1, 0.3, 0.5, 0.7, 0.9], dtype=bin_probs.dtype, device=bin_probs.device)
-    return (bin_probs * centers).sum(dim=-1)
-
+    probs = F.softmax(logits, dim=-1)
+    # Создаем центры бинов: если 10 бинов, то [0.05, 0.15, ..., 0.95]
+    num_bins = logits.shape[-1]
+    bin_values = torch.linspace(1/(2*num_bins), 1 - 1/(2*num_bins), num_bins, device=logits.device)
+    return (probs * bin_values).sum(dim=-1)
 
 class PersonalityClassifier(nn.Module):
-    def __init__(self, input_size=388, hidden_dims=[256, 128, 64], dropout=0.3, num_bins=5):
+    def __init__(self, input_size=388, hidden_dims=[256, 128, 64], dropout=0.2, num_bins=NUM_BINS):
         super().__init__()
         self.num_bins = num_bins
         layers = []
@@ -50,14 +48,12 @@ class PersonalityClassifier(nn.Module):
 
         for h_dim in hidden_dims:
             layers.append(nn.Linear(curr_dim, h_dim))
-            # Заменяем BatchNorm на LayerNorm для сохранения вариативности
-            layers.append(nn.LayerNorm(h_dim))
+            layers.append(nn.LayerNorm(h_dim)) # Стабилизирует обучение на реальных данных
             layers.append(nn.GELU())
             layers.append(nn.Dropout(dropout))
             curr_dim = h_dim
 
         self.feature_extractor = nn.Sequential(*layers)
-        # Выход: 5 черт * количество бинов
         self.classifier = nn.Linear(hidden_dims[-1], 5 * num_bins)
 
     def forward(self, x):
@@ -65,20 +61,11 @@ class PersonalityClassifier(nn.Module):
         logits = self.classifier(features)
         return logits.view(-1, 5, self.num_bins)
 
-
-def bins_to_score(logits):
-    """Конвертирует логиты в число [0, 1] через матожидание."""
-    probs = F.softmax(logits, dim=-1)
-    bin_values = torch.linspace(0.1, 0.9, logits.shape[-1], device=logits.device)
-    return (probs * bin_values).sum(dim=-1)
-
     def predict_scores(self, x):
-        """Используется в AIProfiler для получения непрерывных оценок."""
         self.eval()
         with torch.no_grad():
-            logits = self.forward(x)                  # (1, 5, num_bins)
-            probs = F.softmax(logits, dim=-1)
-            scores = bins_to_score(probs)             # (1, 5)
+            logits = self.forward(x)
+            scores = bins_to_score(logits)
         return scores.squeeze(0).cpu().numpy()
 
 

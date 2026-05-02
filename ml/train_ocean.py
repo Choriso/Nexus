@@ -1,13 +1,3 @@
-"""
-train_ocean.py — Обучение PersonalityClassifier с ординальной классификацией.
-
-Нововведения:
-  - Ordinal loss (Cumulative BCE) вместо регрессии.
-  - Веса примеров: 5.0 для качественных, 1.0 для синтетики.
-  - CosineAnnealingWarmRestarts + warmup.
-  - Early Stopping с восстановлением.
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,24 +6,26 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score, mean_absolute_error
 import numpy as np
 from pathlib import Path
-from typing import Any, Dict, Optional
-import random
 import json
 
-from core import PersonalityClassifier, scores_to_bins, NUM_BINS, BIN_EDGES, bins_to_score
+# Импортируем обновленные компоненты
+from core import PersonalityClassifier, scores_to_bins, NUM_BINS, bins_to_score
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ARTIFACTS_DIR = ROOT_DIR / "ml" / "artifacts"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-
-# ---------------------------------------------------------------------------
-# Датасет
-# ---------------------------------------------------------------------------
 class PersonalityDataset(Dataset):
     def __init__(self, data_path: str):
-        self.data = torch.load(data_path)
-        print(f"Загружено {len(self.data)} примеров.")
+        # Если файл .pt существует — грузим его, иначе это подсказка, что нужен препроцессинг
+        if data_path.endswith('.json'):
+             with open(data_path, 'r', encoding='utf-8') as f:
+                raw_data = json.load(f)
+             self.data = raw_data
+             print(f"Загружено {len(self.data)} сырых примеров из JSON.")
+        else:
+            self.data = torch.load(data_path)
+            print(f"Загружено {len(self.data)} тензорных примеров.")
 
     def __len__(self):
         return len(self.data)
@@ -41,243 +33,161 @@ class PersonalityDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         features = torch.tensor(item["features"], dtype=torch.float32)
-        target = torch.tensor(item["target"], dtype=torch.float32)    # (5,) непрерывные значения
+        target_raw = np.array(item["target"], dtype=np.float32)
+
+        # Для ординальной классификации нам нужны индексы бинов
+        target_bins = torch.tensor(scores_to_bins(target_raw), dtype=torch.long)
         weight = item.get("weight", 1.0)
-        # Преобразуем таргет в бины для ординальной классификации
-        target_bins = torch.tensor(scores_to_bins(item["target"], NUM_BINS), dtype=torch.long)  # (5,) индексы
-        return features, target_bins, weight, target  # сохраняем оригинальный target для метрик
 
+        return features, target_bins, weight, torch.tensor(target_raw)
 
-# ---------------------------------------------------------------------------
-# Ordinal Loss (Cumulative Binary Cross-Entropy)
-# ---------------------------------------------------------------------------
-def ordinal_loss_with_std(logits, target_bins, sample_weights, beta=0.5):
+def ordinal_loss_with_std(logits, target_bins, sample_weights, beta=0.1):
+    """
+    beta уменьшена до 0.1, так как данные 'неплохие' и нам не нужно
+    сильно форсировать разброс искусственно.
+    """
     B, T, K = logits.shape
     device = logits.device
 
-    # 1. Базовый кумулятивный BCE лосс
-    cum_targets = (target_bins.unsqueeze(-1) > torch.arange(K - 1, device=device)).float()
-    probs = F.softmax(logits, dim=-1)
-    cum_probs = torch.cumsum(probs, dim=-1)
-    p_greater = (1.0 - cum_probs[:, :, :-1]).clamp(1e-6, 1.0 - 1e-6)
+    # 1. Cumulative BCE logic
+    # Создаем маску: для бина 3 это [1, 1, 1, 0, 0...] (все что меньше или равно)
+    range_tensor = torch.arange(K - 1, device=device).view(1, 1, -1)
+    cum_targets = (target_bins.unsqueeze(-1) > range_tensor).float()
 
-    bce_loss = F.binary_cross_entropy(p_greater, cum_targets, reduction='none')
+    # Предсказываем кумулятивные вероятности (через сигмоиду для каждого порога)
+    # В этой версии мы используем лог-сумму для стабильности
+    probs = F.softmax(logits, dim=-1)
+    cum_probs = torch.cumsum(probs, dim=-1)[:, :, :-1]
+    cum_probs = cum_probs.clamp(1e-6, 1.0 - 1e-6)
+
+    # Основной лосс
+    bce_loss = F.binary_cross_entropy(cum_probs, cum_targets, reduction='none')
     main_loss = (bce_loss.mean(dim=(1, 2)) * sample_weights).mean()
 
-    # 2. Штраф за низкую дисперсию (Batch STD Penalty)
-    pred_scores = bins_to_score(logits)  # (B, 5)
-    batch_std = pred_scores.std(dim=0).mean()  # Средний STD по всем чертам в батче
-
-    # Мы хотим, чтобы STD был хотя бы 0.2
-    target_std = 0.20
-    std_penalty = torch.relu(target_std - batch_std)
+    # 2. STD Penalty (опционально для поддержания живости предсказаний)
+    pred_scores = bins_to_score(logits)
+    batch_std = pred_scores.std(dim=0).mean()
+    std_penalty = torch.relu(0.15 - batch_std) # Целевое отклонение 0.15
 
     return main_loss + beta * std_penalty, batch_std.item()
 
-
-# ---------------------------------------------------------------------------
-# Early Stopping
-# ---------------------------------------------------------------------------
 class EarlyStopping:
-    def __init__(self, patience=60, min_delta=0.001):
+    def __init__(self, patience=30, min_delta=1e-4):
         self.patience = patience
         self.min_delta = min_delta
-        self.best_loss = float("inf") # Теперь следим за лоссом
+        self.best_r2 = -float("inf")
         self.counter = 0
         self.best_state = None
 
-    def step(self, current_loss, model):
-        # Лосс должен уменьшаться
-        if current_loss < self.best_loss - self.min_delta:
-            self.best_loss = current_loss
+    def step(self, current_r2, model):
+        if current_r2 > self.best_r2 + self.min_delta:
+            self.best_r2 = current_r2
             self.counter = 0
-            self.best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            self.best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            return False
         else:
             self.counter += 1
-        return self.counter >= self.patience
+            return self.counter >= self.patience
 
+    def restore_best(self, model):
+        if self.best_state:
+            model.load_state_dict(self.best_state)
 
-# ---------------------------------------------------------------------------
-# Обучение
-# ---------------------------------------------------------------------------
 def train_model(train_loader, test_loader, config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = PersonalityClassifier(
-        input_size=388,
-        hidden_dims=config.get("hidden_dims", [256, 128, 64]),
-        dropout=config.get("dropout", 0.3),
-        num_bins=NUM_BINS
-    ).to(device)
+    model = PersonalityClassifier(input_size=388).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.get("lr", 0.001))
-    T_0 = config.get("T_0", 15)
-    T_mult = config.get("T_mult", 2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=T_0, T_mult=T_mult, eta_min=config.get("min_lr", 1e-6)
+        optimizer, T_0=config["T_0"], T_mult=2, eta_min=1e-6
     )
-    warmup_epochs = config.get("warmup_epochs", 5)
-    base_lr = config.get("lr", 0.001)
 
-    early_stopping = EarlyStopping(patience=config.get("es_patience", 40))
-    epochs = config.get("epochs", 200)
-    traits = ["O", "C", "E", "A", "N"]
+    early_stopping = EarlyStopping(patience=config["es_patience"])
     history = {"train_loss": [], "test_loss": [], "r2_scores": [], "lr": []}
-    best_r2 = -float("inf")
 
-    print(f"Конфиг: lr={base_lr}, epochs={epochs}, batch={config.get('batch_size', 32)}, "
-          f"hidden_dims={config.get('hidden_dims')}, ordinal bins={NUM_BINS}\n")
-
-    for epoch in range(epochs):
-        # Warmup
-        if epoch < warmup_epochs:
-            lr = base_lr * (epoch + 1) / warmup_epochs
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-
-        # --- TRAIN ---
+    for epoch in range(config["epochs"]):
         model.train()
         train_epoch_loss = 0.0
+
         for x, target_bins, weights, _ in train_loader:
             x, target_bins, weights = x.to(device), target_bins.to(device), weights.to(device)
             optimizer.zero_grad()
-            logits = model(x)                     # (batch, 5, num_bins)
-            loss_per_sample = ordinal_loss_with_std(logits, target_bins)
-            # Взвешиваем samples
-            loss = (loss_per_sample * weights).mean()
+
+            logits = model(x)
+            loss, _ = ordinal_loss_with_std(logits, target_bins, weights)
+
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             train_epoch_loss += loss.item()
 
-        if epoch >= warmup_epochs:
-            scheduler.step(epoch - warmup_epochs)
+        scheduler.step()
 
-        # --- EVAL ---
+        # Evaluation
         model.eval()
-        test_epoch_loss = 0.0
         all_preds, all_targets = [], []
+        test_epoch_loss = 0.0
         with torch.no_grad():
-            for x, target_bins, _, orig_targets in test_loader:
-                x = x.to(device)
-                target_bins = target_bins.to(device)
+            for x, target_bins, weights, orig_targets in test_loader:
+                x, target_bins, weights = x.to(device), target_bins.to(device), weights.to(device)
                 logits = model(x)
-                loss = ordinal_loss_with_std(logits, target_bins)
+                loss, _ = ordinal_loss_with_std(logits, target_bins, weights)
                 test_epoch_loss += loss.item()
 
-                # Преобразуем в непрерывные предикты
-                probs = F.softmax(logits, dim=-1)   # (batch, 5, num_bins)
-                scores = bins_to_score(probs)        # (batch, 5)
-                all_preds.append(scores.cpu().numpy())
+                preds = bins_to_score(logits)
+                all_preds.append(preds.cpu().numpy())
                 all_targets.append(orig_targets.numpy())
 
         preds_np = np.vstack(all_preds)
         targets_np = np.vstack(all_targets)
-
-        avg_train = train_epoch_loss / len(train_loader)
-        avg_test = test_epoch_loss / len(test_loader)
         r2 = r2_score(targets_np, preds_np)
-        r2_ind = r2_score(targets_np, preds_np, multioutput="raw_values")
-        mae = mean_absolute_error(targets_np, preds_np)
-        dir_acc = np.mean((preds_np > 0.5) == (targets_np > 0.5))
-        cur_lr = optimizer.param_groups[0]["lr"]
 
-        history["train_loss"].append(avg_train)
-        history["test_loss"].append(avg_test)
+        history["train_loss"].append(train_epoch_loss / len(train_loader))
+        history["test_loss"].append(test_epoch_loss / len(test_loader))
         history["r2_scores"].append(r2)
-        history["lr"].append(cur_lr)
+        history["lr"].append(optimizer.param_groups[0]["lr"])
 
-        if r2 > best_r2:
-            best_r2 = r2
-            torch.save(model.state_dict(), ARTIFACTS_DIR / "personality_model_best.pth")
-            details = " | ".join([f"{traits[i]}: {r2_ind[i]:.3f}" for i in range(5)])
-            print(f"Эпоха {epoch:03d} | MAE: {mae:.4f} | DirAcc: {dir_acc:.2%} | "
-                  f"Loss: {avg_test:.4f} | LR: {cur_lr:.2e} | New Best R2: {r2:.4f} ({details})")
-        elif epoch % 10 == 0:
-            print(f"Эпоха {epoch:03d} | R2: {r2:.4f} | MAE: {mae:.4f} | "
-                  f"DirAcc: {dir_acc:.2%} | Loss: {avg_test:.4f} | LR: {cur_lr:.2e}")
+        if epoch % 5 == 0:
+            print(f"Epoch {epoch:03d} | Loss: {history['test_loss'][-1]:.4f} | R2: {r2:.4f}")
 
         if early_stopping.step(r2, model):
-            print(f"\n[EarlyStopping] Остановка на эпохе {epoch}.")
+            print(f"Early stopping at epoch {epoch}")
             early_stopping.restore_best(model)
             break
 
-    plot_training_results(history)
-
-    print("\n--- АНАЛИЗ РАЗБРОСА (STDEV) ---")
-    for i, trait in enumerate(traits):
-        pred_std = np.std(preds_np[:, i])
-        target_std = np.std(targets_np[:, i])
-        print(f"  Черта {trait}: Предсказано STD={pred_std:.3f} | В данных STD={target_std:.3f}")
-
-    return model
-
-
-def plot_training_results(history):
-    if not history["train_loss"]:
-        return
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4))
-    axes[0].plot(history["train_loss"], label="Train")
-    axes[0].plot(history["test_loss"], label="Test")
-    axes[0].set_title("Ordinal BCE Loss")
-    axes[0].set_xlabel("Epoch")
-    axes[0].legend()
-    axes[1].plot(history["r2_scores"], color="green")
-    axes[1].axhline(max(history["r2_scores"]), color="green", linestyle="--", alpha=0.4)
-    axes[1].set_title(f"R² Score (best: {max(history['r2_scores']):.4f})")
-    axes[1].set_xlabel("Epoch")
-    axes[2].plot(history["lr"], color="orange")
-    axes[2].set_title("LR (Cosine Annealing)")
-    axes[2].set_xlabel("Epoch")
-    axes[2].set_yscale("log")
-    plt.tight_layout()
-    plt.savefig(ARTIFACTS_DIR / "training_report.png", dpi=120)
-    plt.close()
-    print(f"\nГрафик сохранён: {ARTIFACTS_DIR / 'training_report.png'}")
-
-
-def save_artifacts(model_obj):
-    target = ARTIFACTS_DIR / "personality_model.pth"
-    torch.save(model_obj.state_dict(), target)
-    print(f"Веса модели сохранены: {target}")
-    return target
-
+    return model, history
 
 def main():
-    cache_path = "data/train_data_precomputed.pt"
-    if not Path(cache_path).exists():
-        print(f"❌ Файл {cache_path} не найден!")
+    # Путь к данным относительно файла
+    data_path = "data/train_data_precomputed.pt"
+    # Если ты хочешь использовать JSON напрямую, поменяй путь здесь
+
+    if not Path(data_path).exists():
+        print(f"Файл {data_path} не найден. Проверь наличие сгенерированных тензоров.")
         return
 
-    full_dataset = PersonalityDataset(cache_path)
-    train_size = int(0.8 * len(full_dataset))
-    test_size = len(full_dataset) - train_size
-    train_ds, test_ds = torch.utils.data.random_split(
-        full_dataset, [train_size, test_size],
-        generator=torch.Generator().manual_seed(42)
-    )
+    ds = PersonalityDataset(data_path)
+    train_size = int(0.85 * len(ds))
+    test_size = len(ds) - train_size
+    train_ds, test_ds = torch.utils.data.random_split(ds, [train_size, test_size])
 
     config = {
-        "lr": 5e-4,
-        "epochs": 200,
-        "batch_size": 32,
-        "hidden_dims": [256, 128, 64],
-        "dropout": 0.3,
-        "T_0": 15,
-        "T_mult": 2,
-        "min_lr": 1e-6,
-        "warmup_epochs": 5,
-        "es_patience": 60,
-        "es_min_delta": 1e-4,
+        "lr": 1e-3,          # Стандартный LR для AdamW
+        "epochs": 150,
+        "batch_size": 64,    # Чуть увеличил батч для стабильности градиента
+        "T_0": 10,
+        "es_patience": 25,
     }
 
     train_loader = DataLoader(train_ds, batch_size=config["batch_size"], shuffle=True)
     test_loader = DataLoader(test_ds, batch_size=config["batch_size"])
 
-    model_obj = train_model(train_loader, test_loader, config)
-    if model_obj:
-        save_artifacts(model_obj)
-    print("\n✅ Обучение завершено.")
+    model, history = train_model(train_loader, test_loader, config)
 
+    # Сохранение
+    save_path = ARTIFACTS_DIR / "personality_model_best.pth"
+    torch.save(model.state_dict(), save_path)
+    print(f"Модель сохранена в {save_path}")
 
 if __name__ == "__main__":
     main()
