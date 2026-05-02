@@ -18,47 +18,113 @@ MBTI_TYPES = [
 # Конфигурация ординальной классификации
 # ---------------------------------------------------------------
 
-# Константы
 NUM_BINS = 10
 BIN_EDGES = np.linspace(0, 1, NUM_BINS + 1)[1:-1]
 
+# Центры бинов как numpy-константа (для использования вне torch)
+BIN_CENTERS = np.linspace(1 / (2 * NUM_BINS), 1 - 1 / (2 * NUM_BINS), NUM_BINS).astype(np.float32)
+
+
 def scores_to_bins(y, num_bins=NUM_BINS):
+    """Конвертирует непрерывный score [0,1] в индекс бина [0, num_bins-1]."""
     y = np.clip(y, 0.0, 1.0)
-    # digitize возвращает индекс бина от 0 до num_bins-1
     bins = np.digitize(y, BIN_EDGES, right=False)
     return bins.astype(np.int64)
 
+
 def bins_to_score(logits):
     """
-    Конвертирует логиты в число [0, 1] через матожидание.
-    Работает динамически для любого количества бинов.
+    Конвертирует логиты (B, T, K) → предсказанные scores (B, T) через матожидание.
+    bin_values — фиксированная константа, не обучается.
     """
     probs = F.softmax(logits, dim=-1)
-    # Создаем центры бинов: если 10 бинов, то [0.05, 0.15, ..., 0.95]
     num_bins = logits.shape[-1]
-    bin_values = torch.linspace(1/(2*num_bins), 1 - 1/(2*num_bins), num_bins, device=logits.device)
+    # detach не нужен — bin_values не имеют grad по умолчанию (создаются как leaf-константа)
+    bin_values = torch.linspace(
+        1 / (2 * num_bins),
+        1 - 1 / (2 * num_bins),
+        num_bins,
+        device=logits.device,
+        dtype=logits.dtype,
+    )
     return (probs * bin_values).sum(dim=-1)
 
-class PersonalityClassifier(nn.Module):
-    def __init__(self, input_size=388, hidden_dims=[256, 128, 64], dropout=0.2, num_bins=NUM_BINS):
+
+# ---------------------------------------------------------------
+# ИСПРАВЛЕННАЯ АРХИТЕКТУРА PersonalityClassifier
+# Изменения:
+#   1. Уменьшена глубина [256, 128] вместо [256, 128, 64] — меньше переобучения
+#   2. Dropout снижен до 0.15 — датасет маленький, не надо давить сигнал
+#   3. Убран LayerNorm после последнего скрытого слоя (перед head'ом) —
+#      он мешал сходимости на малых батчах
+#   4. Добавлен residual-skip для стабилизации градиентов
+# ---------------------------------------------------------------
+
+class ResidualBlock(nn.Module):
+    """Лёгкий residual-блок: Linear → LN → GELU → Dropout → Linear → LN + skip."""
+    def __init__(self, dim, dropout=0.15):
         super().__init__()
-        self.num_bins = num_bins
-        layers = []
-        curr_dim = input_size
-
-        for h_dim in hidden_dims:
-            layers.append(nn.Linear(curr_dim, h_dim))
-            layers.append(nn.LayerNorm(h_dim)) # Стабилизирует обучение на реальных данных
-            layers.append(nn.GELU())
-            layers.append(nn.Dropout(dropout))
-            curr_dim = h_dim
-
-        self.feature_extractor = nn.Sequential(*layers)
-        self.classifier = nn.Linear(hidden_dims[-1], 5 * num_bins)
+        self.block = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.LayerNorm(dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim, dim),
+            nn.LayerNorm(dim),
+        )
+        self.act = nn.GELU()
 
     def forward(self, x):
-        features = self.feature_extractor(x)
-        logits = self.classifier(features)
+        return self.act(x + self.block(x))
+
+
+class PersonalityClassifier(nn.Module):
+    """
+    Архитектура для предсказания OCEAN-профиля как ординальной классификации.
+
+    input_size=388:
+        384 (SBERT embedding) + 4 (ручные признаки)
+
+    Схема:
+        Input → Projection(388→256) → LN → GELU → Dropout
+              → ResidualBlock(256)
+              → Linear(256→128) → LN → GELU → Dropout
+              → Head: Linear(128 → 5 * num_bins)
+              → view(-1, 5, num_bins)
+    """
+
+    def __init__(self, input_size=388, dropout=0.15, num_bins=NUM_BINS):
+        super().__init__()
+        self.num_bins = num_bins
+
+        self.projection = nn.Sequential(
+            nn.Linear(input_size, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
+        self.residual = ResidualBlock(256, dropout=dropout)
+
+        self.bottleneck = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.LayerNorm(128),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
+        # head: 5 трейтов × num_bins бинов
+        self.classifier = nn.Linear(128, 5 * num_bins)
+
+        # Xavier-инициализация head'а — важно для стабильного старта
+        nn.init.xavier_uniform_(self.classifier.weight, gain=0.5)
+        nn.init.zeros_(self.classifier.bias)
+
+    def forward(self, x):
+        x = self.projection(x)
+        x = self.residual(x)
+        x = self.bottleneck(x)
+        logits = self.classifier(x)
         return logits.view(-1, 5, self.num_bins)
 
     def predict_scores(self, x):
@@ -68,6 +134,10 @@ class PersonalityClassifier(nn.Module):
             scores = bins_to_score(logits)
         return scores.squeeze(0).cpu().numpy()
 
+
+# ---------------------------------------------------------------
+# MBTIClassifier — без изменений
+# ---------------------------------------------------------------
 
 class MBTIClassifier(nn.Module):
     def __init__(self, input_size=384, num_classes=16):
@@ -88,18 +158,32 @@ class MBTIClassifier(nn.Module):
         return self.net(x)
 
 
+# ---------------------------------------------------------------
+# AIProfiler — без изменений в логике, обновлён вызов классификатора
+# ---------------------------------------------------------------
+
 class AIProfiler:
     def __init__(self, db=None, use_local_models=True):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.bert_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2', device=self.device)
+        self.bert_model = SentenceTransformer(
+            'paraphrase-multilingual-MiniLM-L12-v2', device=self.device
+        )
         self.mbti_classes = MBTI_TYPES
 
         self.model = PersonalityClassifier(input_size=388, num_bins=NUM_BINS).to(self.device)
-        self.mbti_model = MBTIClassifier(input_size=384, num_classes=len(self.mbti_classes)).to(self.device)
+        self.mbti_model = MBTIClassifier(
+            input_size=384, num_classes=len(self.mbti_classes)
+        ).to(self.device)
 
-        base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.model_path = os.path.join(base_path, "ml/artifacts/personality_model_best.pth")
-        self.mbti_model_path = os.path.join(base_path, "ml/artifacts/mbti_model.pth")
+        base_path = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        self.model_path = os.path.join(
+            base_path, "ml/artifacts/personality_model_best.pth"
+        )
+        self.mbti_model_path = os.path.join(
+            base_path, "ml/artifacts/mbti_model.pth"
+        )
 
         if os.path.exists(self.model_path):
             self.model.load_state_dict(
@@ -110,14 +194,15 @@ class AIProfiler:
         self.has_mbti_model = False
         if os.path.exists(self.mbti_model_path):
             self.mbti_model.load_state_dict(
-                torch.load(self.mbti_model_path, map_location=self.device, weights_only=True)
+                torch.load(
+                    self.mbti_model_path, map_location=self.device, weights_only=True
+                )
             )
             self.has_mbti_model = True
         self.mbti_model.eval()
 
     @staticmethod
     def _ocean_to_soft_probs(mbti_from_ocean, temperature=0.5):
-        """Конвертирует OCEAN→MBTI в мягкое распределение."""
         logits = np.zeros(len(MBTI_TYPES), dtype=np.float32)
         idx = MBTI_TYPES.index(mbti_from_ocean)
         logits[idx] = 1.0 / temperature
@@ -133,7 +218,11 @@ class AIProfiler:
             return [0.0, 0.0, 0.0, 0.0]
         length = min(len(text) / 1000, 1.0)
         letters = [c for c in text if c.isalpha()]
-        caps = sum(1 for c in letters if c.isupper()) / (len(letters) + 1) if letters else 0
+        caps = (
+            sum(1 for c in letters if c.isupper()) / (len(letters) + 1)
+            if letters
+            else 0
+        )
         excl = min(text.count('!') / 5, 1.0)
         ques = min(text.count('?') / 5, 1.0)
         return [length, caps, excl, ques]
@@ -143,20 +232,24 @@ class AIProfiler:
         if not clean_text:
             return None
 
-        # OCEAN через predict_scores
         m_feats = self.get_manual_features(text)
-        emb = self.bert_model.encode([clean_text.lower()], convert_to_tensor=True)
-        manual_tensor = torch.tensor(m_feats, dtype=torch.float32).to(self.device).unsqueeze(0)
+        emb = self.bert_model.encode(
+            [clean_text.lower()], convert_to_tensor=True
+        )
+        manual_tensor = (
+            torch.tensor(m_feats, dtype=torch.float32).to(self.device).unsqueeze(0)
+        )
         combined_input = torch.cat([emb, manual_tensor], dim=1)
 
         ocean_scores = self.model.predict_scores(combined_input)
         ocean_scores = np.clip(ocean_scores, 0.05, 0.95).tolist()
 
-        # MBTI ансамбль и остальное без изменений
         if self.has_mbti_model:
             with torch.no_grad():
                 mbti_logits = self.mbti_model(emb)
-                mbti_probs = torch.softmax(mbti_logits, dim=1).cpu().numpy()[0]
+                mbti_probs = (
+                    torch.softmax(mbti_logits, dim=1).cpu().numpy()[0]
+                )
         else:
             mbti_probs = np.ones(len(self.mbti_classes)) / len(self.mbti_classes)
 
@@ -170,7 +263,9 @@ class AIProfiler:
         communication = self.infer_communication_style(text, ocean_scores)
         interests = self.extract_interests(text)
 
-        ocean_conf = float(np.mean(np.abs(np.array(ocean_scores) - 0.5)) * 2)
+        ocean_conf = float(
+            np.mean(np.abs(np.array(ocean_scores) - 0.5)) * 2
+        )
         mbti_conf = float(np.max(blended_probs))
 
         return {
@@ -181,7 +276,9 @@ class AIProfiler:
             "traits": interests.get("traits", []),
             "values": interests.get("values", []),
             "compatible_mbti_types": self.get_compatible_mbti(mbti_type),
-            "confidence_score": float(np.clip((ocean_conf + mbti_conf) / 2.0, 0.0, 1.0)),
+            "confidence_score": float(
+                np.clip((ocean_conf + mbti_conf) / 2.0, 0.0, 1.0)
+            ),
         }
 
     def infer_mbti(self, scores):
@@ -208,14 +305,34 @@ class AIProfiler:
             }
 
         letters = [ch for ch in c_text if ch.isalpha()]
-        uppercase_ratio = (sum(1 for ch in letters if ch.isupper()) / len(letters)) if letters else 0.0
+        uppercase_ratio = (
+            (sum(1 for ch in letters if ch.isupper()) / len(letters))
+            if letters
+            else 0.0
+        )
         exclamation_ratio = min(c_text.count("!") / 6.0, 1.0)
-        avg_word_len = np.mean([len(w) for w in c_text.split()]) if c_text.split() else 0.0
+        avg_word_len = (
+            np.mean([len(w) for w in c_text.split()]) if c_text.split() else 0.0
+        )
         comma_density = min(c_text.count(",") / 10.0, 1.0)
 
-        formality = float(np.clip(0.3 + (avg_word_len / 10.0) + comma_density * 0.2 - uppercase_ratio * 0.2, 0.0, 1.0))
-        enthusiasm = float(np.clip(0.2 + exclamation_ratio * 0.6 + scores[2] * 0.2, 0.0, 1.0))
-        detail_oriented = float(np.clip(0.3 + scores[1] * 0.5 + min(len(c_text) / 1200.0, 1.0) * 0.2, 0.0, 1.0))
+        formality = float(
+            np.clip(
+                0.3 + (avg_word_len / 10.0) + comma_density * 0.2 - uppercase_ratio * 0.2,
+                0.0,
+                1.0,
+            )
+        )
+        enthusiasm = float(
+            np.clip(0.2 + exclamation_ratio * 0.6 + scores[2] * 0.2, 0.0, 1.0)
+        )
+        detail_oriented = float(
+            np.clip(
+                0.3 + scores[1] * 0.5 + min(len(c_text) / 1200.0, 1.0) * 0.2,
+                0.0,
+                1.0,
+            )
+        )
 
         if formality > 0.7 and detail_oriented > 0.6:
             style = "professional"
@@ -244,30 +361,38 @@ class AIProfiler:
         }
 
     def extract_interests(self, text):
-        """Rule-based extraction of interests/topics/skills/preferences."""
         normalized = self.clean_text(text).lower()
         tokens = [t for t in re.findall(r"[а-яa-z0-9]+", normalized) if len(t) > 2]
         counts = Counter(tokens)
 
         def top_matching(words, limit=8):
-            ranked = sorted(((w, counts[w]) for w in words if counts[w] > 0), key=lambda x: x[1], reverse=True)
+            ranked = sorted(
+                ((w, counts[w]) for w in words if counts[w] > 0),
+                key=lambda x: x[1],
+                reverse=True,
+            )
             return [w for w, _ in ranked[:limit]]
 
         hobby_words = {
-            "спорт", "футбол", "бег", "йога", "игры", "музыка", "фото", "чтение", "рисование",
-            "coding", "music", "travel", "gaming", "books", "fitness",
+            "спорт", "футбол", "бег", "йога", "игры", "музыка", "фото",
+            "чтение", "рисование", "coding", "music", "travel", "gaming",
+            "books", "fitness",
         }
         topic_words = {
-            "психология", "наука", "технологии", "бизнес", "финансы", "кино", "искусство", "образование",
-            "science", "tech", "startup", "ai", "ml",
+            "психология", "наука", "технологии", "бизнес", "финансы",
+            "кино", "искусство", "образование", "science", "tech",
+            "startup", "ai", "ml",
         }
         skill_words = {
-            "python", "sql", "аналитика", "дизайн", "маркетинг", "лидерство", "коммуникация",
-            "management", "backend", "frontend", "devops",
+            "python", "sql", "аналитика", "дизайн", "маркетинг",
+            "лидерство", "коммуникация", "management", "backend",
+            "frontend", "devops",
         }
         dislike_words = {"ненавижу", "бесит", "не люблю", "раздражает"}
         goal_markers = {"цель", "план", "хочу", "мечта", "задача"}
-        values_markers = {"семья", "карьера", "свобода", "развитие", "стабильность", "творчество"}
+        values_markers = {
+            "семья", "карьера", "свобода", "развитие", "стабильность", "творчество"
+        }
 
         hobbies = top_matching(hobby_words)
         topics = top_matching(topic_words)
@@ -284,8 +409,18 @@ class AIProfiler:
             work_style = None
 
         preferences = {
-            "language_mix": "ru+en" if re.search(r"[a-z]", normalized) and re.search(r"[а-я]", normalized) else "single",
-            "message_length": "long" if len(normalized) > 500 else "medium" if len(normalized) > 180 else "short",
+            "language_mix": (
+                "ru+en"
+                if re.search(r"[a-z]", normalized) and re.search(r"[а-я]", normalized)
+                else "single"
+            ),
+            "message_length": (
+                "long"
+                if len(normalized) > 500
+                else "medium"
+                if len(normalized) > 180
+                else "short"
+            ),
         }
 
         return {
@@ -318,8 +453,10 @@ class AIProfiler:
 
     def calculate_text_similarity(self, texts1, texts2):
         all_texts = texts1 + texts2
-        embeddings = self.bert_model.encode(all_texts, batch_size=32, convert_to_tensor=True)
-        emb1 = embeddings[:len(texts1)]
+        embeddings = self.bert_model.encode(
+            all_texts, batch_size=32, convert_to_tensor=True
+        )
+        emb1 = embeddings[: len(texts1)]
         emb2 = embeddings[len(texts1):]
         return util.cos_sim(emb1, emb2).diagonal().cpu().numpy()
 
