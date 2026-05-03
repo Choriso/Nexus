@@ -1,0 +1,28 @@
+# Web & API
+flask
+flask-login
+flask-wtf
+flask-socketio
+flask-cors
+
+# Database
+sqlalchemy
+flask-sqlalchemy
+flask-migrate
+
+# AI Core
+torch
+sentence-transformers
+transformers
+numpy
+pandas
+scikit-learn
+
+# Async Processing
+celery
+redis
+python-dotenv
+
+# Utilities
+requests
+blinker

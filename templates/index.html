@@ -2,10 +2,11 @@
 
 {% block content %}
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-<script src="{{ url_for('static', filename='js/graph_editor.js') }}"></script>
-    <style>
-    #graph-container {
+{# FIX: cache-busting — браузер не будет подавать старый JS из кэша #}
+<script src="{{ url_for('static', filename='js/graph_editor.js') }}?v={% block js_version %}2{% endblock %}"></script>
 
+<style>
+    #graph-container {
         background: #16161a;
         border-radius: var(--radius-md);
         overflow: hidden;
@@ -16,19 +17,18 @@
         -webkit-user-select: none;
         touch-action: none;
     }
-    /* Контейнер боковой панели */
+
     .app-main-grid__side {
         display: flex;
         flex-direction: column;
-        height: 100%; /* Занимает всю доступную высоту сетки */
-        max-height: 80vh; /* Ограничиваем общую высоту, чтобы не толкало футер */
+        height: 100%;
+        max-height: 80vh;
         background: #16161a;
         border-radius: var(--radius-md);
         border: 1px solid #242629;
         padding: 15px;
     }
 
-    /* Заголовок всегда сверху (не скроллится) */
     .side-panel-header {
         flex-shrink: 0;
         margin-bottom: 15px;
@@ -36,29 +36,17 @@
         border-bottom: 1px solid #242629;
     }
 
-    /* САМОЕ ВАЖНОЕ: Список результатов со скроллом */
     #resultsList {
-        flex-grow: 1; /* Занимает всё оставшееся место */
-        overflow-y: auto; /* Включает вертикальную прокрутку */
-        padding-right: 8px; /* Место для полосы прокрутки */
+        flex-grow: 1;
+        overflow-y: auto;
+        padding-right: 8px;
     }
 
-    /* Стилизация полосы прокрутки (делаем её красивой) */
-    .custom-scrollbar::-webkit-scrollbar {
-        width: 6px;
-    }
-    .custom-scrollbar::-webkit-scrollbar-track {
-        background: #16161a;
-    }
-    .custom-scrollbar::-webkit-scrollbar-thumb {
-        background: #7f5af0; /* Фиолетовый под стиль кнопок */
-        border-radius: 10px;
-    }
-    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-        background: #94a1b2;
-    }
+    .custom-scrollbar::-webkit-scrollbar       { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #16161a; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #7f5af0; border-radius: 10px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a1b2; }
 
-    /* Стиль карточки (чтобы они не слипались) */
     .match-card {
         background: #242629;
         border: 1px solid #444b5a;
@@ -67,71 +55,75 @@
         margin-bottom: 12px;
         transition: transform 0.2s;
     }
-    .match-card:hover {
-        border-color: #7f5af0;
-    }
+    .match-card:hover { border-color: #7f5af0; }
 
-    .node-circle {
-        stroke: #16161a;
-        stroke-width: 2px;
-        transition: r 0.3s ease;
-    }
-    .node:hover .node-circle {
-        r: 12px; /* Увеличиваем при наведении */
-    }
-    .node-label {
+    .node circle { transition: r 0.2s ease; }
+    .node:hover circle { r: 12px; }
+    .node text {
         fill: #94a1b2;
         font-size: 13px;
         pointer-events: none;
+        user-select: none;
         font-family: 'Inter', system-ui, sans-serif;
     }
-    .link {
+    line {
         stroke: #444b5a;
         stroke-opacity: 0.4;
         stroke-width: 1.5px;
     }
     .controls {
         position: absolute;
-        top: 20px;
-        right: 20px;
+        top: 20px; right: 20px;
         z-index: 10;
         display: flex;
         flex-direction: column;
         gap: 8px;
     }
-    /* Кнопки в стиле современного UI */
+    #graphCanvas          { cursor: grab;    display: block; }
+    #graphCanvas:active   { cursor: grabbing; }
 
-
-    .btn-ui:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(127, 90, 240, 0.3); }
-
-    .graphCanvas {
-        cursor: grab; /* Показывает "руку" при наведении на пустую область */
+    /* Модальное окно */
+    #nodeModal {
+        display: none;
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,0.8);
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
     }
-
-    .graphCanvas:active {
-        cursor: grabbing; /* Показывает сжатый кулак при перетаскивании */
+    .modal-box {
+        background: #242629;
+        padding: 24px;
+        border-radius: 16px;
+        width: 420px;
+        max-width: 95vw;
+        border: 1px solid #7f5af0;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        box-sizing: border-box;
     }
-
-    .node text {
-        pointer-events: none; /* Текст не перехватывает клики, они проходят сквозь него на узел */
-        user-select: none;
+    .modal-box h2 {
+        color: #fffffe;
+        margin: 0 0 20px;
+        font-family: sans-serif;
     }
+    .modal-body { display: flex; flex-direction: column; gap: 12px; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 15px; }
 </style>
+
 <div class="app-main-grid graph-layout-active">
     <section class="app-main-grid__main">
-        <div class="search-container">
-            <form class="search-container__form" onsubmit="event.preventDefault(); smartSearch();">
-                <input type="text" id="smartSearchInput" class="ui-input search-input"
-                       placeholder="Введите запрос или кликните на узел графа...">
-                <button class="btn-primary" type="button" onclick="smartSearch()">Найти</button>
-            </form>
-        </div>
-
         <div id="graph-wrapper" style="position: relative;">
             <div id="graph-container">
-                <svg id="graphCanvas" width="100%" height="617"></svg>
+                {#
+                  FIX: имя пользователя — через data-атрибут, не через inline JS.
+                  Это защищает от XSS и упрощает чтение в JS.
+                #}
+                <svg id="graphCanvas"
+                     width="100%" height="617"
+                     data-username="{{ current_user.username | e }}">
+                </svg>
                 <div class="controls">
-                    <button class="btn-primary" onclick="addNode()">Создать узел</button>
+                    <button class="btn-primary" onclick="window.addNode()">Создать узел</button>
                 </div>
             </div>
         </div>
@@ -148,69 +140,166 @@
     </aside>
 </div>
 
-<div id="nodeModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; align-items: center; justify-content: center;">
-    <div style="background: #242629; padding: 20px; border-radius: 12px; width: 400px; border: 1px solid #7f5af0;">
-        <h2 style="color: white;">Новый узел</h2>
-        <input type="text" id="nodeTitle" placeholder="Название" class="ui-input" style="width: 100%; margin-bottom: 10px;">
-        <textarea id="nodeDescription" placeholder="Описание" class="ui-input" style="width: 100%; margin-bottom: 10px;"></textarea>
-        <select id="nodeCategory" class="ui-input" style="width: 100%; margin-bottom: 20px;">
-            <option value="hobby">Хобби</option>
-            <option value="work">Работа</option>
-            <option value="want">Цель</option>
-        </select>
-        <div style="display: flex; gap: 10px;">
-            <button onclick="saveNode()" class="btn-primary" style="flex: 1;">Сохранить</button>
-            <button onclick="document.getElementById('nodeModal').style.display='none'" class="btn-primary" style="background: #666;">Отмена</button>
+{# Модальное окно — за пределами section, чтобы z-index работал корректно #}
+<div id="nodeModal">
+    <div class="modal-box">
+        <h2 id="modalTitle">Новый интерес</h2>
+        <div class="modal-body">
+            <input  type="text" id="nodeTitle"       class="ui-input" placeholder="Название"
+                    style="width:100%; box-sizing:border-box;">
+
+            <textarea id="nodeDescription" class="ui-input" placeholder="Описание"
+                      style="width:100%; box-sizing:border-box; resize:none; overflow:hidden; min-height:80px;"
+                      oninput="this.style.height=''; this.style.height=this.scrollHeight+'px'"></textarea>
+
+            <select id="nodeCategory" class="ui-input" style="width:100%; box-sizing:border-box;">
+                <option value="hobby">Хобби</option>
+                <option value="work">Работа</option>
+                <option value="psychology">Психология</option>
+            </select>
+
+            <div class="modal-actions">
+                <button onclick="window.saveNode()"  class="btn-primary" style="flex:2; white-space:nowrap;">Сохранить</button>
+                {# FIX: id="deleteBtn" — управляем видимостью через JS, не через inline style #}
+                <button id="deleteBtn" onclick="window.deleteNode()" class="btn-primary"
+                        style="background:#e53935; border-color:#b71c1c; flex:1; white-space:nowrap; display:none;">
+                    Удалить
+                </button>
+                <button onclick="window.closeModal()" class="btn-primary"
+                        style="background:#444; border-color:#555; flex:1; white-space:nowrap;">
+                    Отмена
+                </button>
+            </div>
         </div>
     </div>
 </div>
 
 <script>
-// Добавь эту функцию в index.html, чтобы сохранение работало
-async function saveNode() {
-    const title = document.getElementById('nodeTitle').value;
-    const response = await fetch('/knowledge_graph/node', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            title: title,
+    // Глобальные переменные для модалки
+    window._editingNodeId = null;
+
+    window.addEventListener('load', () => {
+        const canvas = document.getElementById('graphCanvas');
+        const userName = canvas.dataset.username || "Я";
+
+        // --- ЗАГРУЗКА ДАННЫХ (Вариант 1, который у тебя заработал) ---
+        fetch('/knowledge_graph_data')
+            .then(res => res.json())
+            .then(data => {
+                console.log('[KnowledgeGraph] Data loaded:', data.nodes.length, 'nodes');
+                if (typeof initGraph === 'function') {
+                    // Инициализируем граф
+                    initGraph(data.nodes, data.connections, userName);
+                }
+            })
+            .catch(err => console.error("Ошибка загрузки графа:", err));
+
+        // --- ФУНКЦИЯ МАТЧИНГА (из Варианта 2) ---
+        window.onNodeClick = async function(nodeId) {
+            const list = document.getElementById('resultsList');
+            const badge = document.getElementById('matchCount');
+            list.innerHTML = '<div class="placeholder-text">Загрузка...</div>';
+
+            try {
+                const res = await fetch(`/api/graph/match/${nodeId}`);
+                const data = await res.json();
+
+                badge.textContent = data.length || 0;
+                if (!data.length) {
+                    list.innerHTML = '<div class="placeholder-text">Совпадений не найдено</div>';
+                    return;
+                }
+
+                list.innerHTML = data.map(m => `
+                    <div class="match-card">
+                        <div class="match-score">${m.compatibility}%</div>
+                        <div class="match-info">
+                            <div class="match-name">${_esc(m.user_name)}</div>
+                            <div class="match-reason">${_esc(m.node_title)}</div>
+                        </div>
+                        <button class="btn-primary" onclick="location.href='/viewProfile?user_id=${m.user_id}'">Профиль</button>
+                    </div>
+                `).join('');
+            } catch (err) {
+                list.innerHTML = '<div class="placeholder-text">Ошибка матчинга</div>';
+            }
+        };
+    });
+
+    // --- ФУНКЦИИ УПРАВЛЕНИЯ УЗЛАМИ ---
+
+    window.addNode = function() {
+        window._editingNodeId = null;
+        document.getElementById('nodeTitle').value = '';
+        document.getElementById('nodeDescription').value = '';
+        document.getElementById('modalTitle').textContent = 'Новый интерес';
+        document.getElementById('deleteBtn').style.display = 'none';
+        document.getElementById('nodeModal').style.display = 'flex';
+    };
+
+    window.openEditModal = function(d) {
+        window._editingNodeId = String(d.id);
+        document.getElementById('nodeTitle').value = d.title || '';
+        document.getElementById('nodeDescription').value = d.description || '';
+        document.getElementById('nodeCategory').value = d.category || 'hobby';
+        document.getElementById('modalTitle').textContent = 'Редактировать';
+        document.getElementById('deleteBtn').style.display = 'block';
+        document.getElementById('nodeModal').style.display = 'flex';
+    };
+
+    window.saveNode = async function() {
+        const id = window._editingNodeId;
+        const payload = {
+            title: document.getElementById('nodeTitle').value,
             description: document.getElementById('nodeDescription').value,
             category: document.getElementById('nodeCategory').value,
             x: 0, y: 0
-        })
-    });
-    if (response.ok) location.reload();
-}
-window.addEventListener('load', () => {
-    // Загружаем данные графа через твой текущий роут
-    fetch('/knowledge_graph_data') // Создадим этот легкий эндпоинт ниже
-        .then(res => res.json())
-        .then(data => {
-            initGraph(data.nodes, data.connections);
+        };
+
+        const url = id ? `/knowledge_graph/node/${id}` : '/knowledge_graph/node';
+        const method = id ? 'PUT' : 'POST';
+
+        const res = await fetch(url, {
+            method: method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
-});
 
-async function smartSearch() {
-    const q = document.getElementById('smartSearchInput').value;
-    // Логика: если поиск по тексту, подсвечиваем узлы или ищем людей
-    const response = await fetch(`/search_api?q=${encodeURIComponent(q)}`);
-    const results = await response.json();
-    renderMatches(results);
-}
+        if (res.ok) location.reload();
+    };
 
-function renderMatches(matches) {
-    const list = document.getElementById('resultsList');
-    list.innerHTML = matches.map(m => `
-        <div class="match-card">
-            <div class="match-score">${m.compatibility}%</div>
-            <div class="match-info">
-                <div class="match-name">${m.user_name}</div>
-                <div class="match-reason">${m.node_title} (${m.category})</div>
-            </div>
-            <button class="btn-primary" onclick="location.href='/viewProfile?user_id=${m.user_id}'">Профиль</button>
-        </div>
-    `).join('');
-    document.getElementById('matchCount').innerText = matches.length;
-}
+    window.deleteNode = async function() {
+        const id = window._editingNodeId;
+        if (!id) return;
+
+        if (!confirm('Вы уверены, что хотите удалить этот интерес?')) return;
+
+        try {
+            console.log(`[Delete] Attempting to delete node: ${id}`);
+
+            const res = await fetch(`/knowledge_graph/node/${id}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (res.ok) {
+                console.log('[Delete] Success');
+                window.closeModal(); // Сначала закрываем окно
+                location.reload();   // Затем обновляем страницу
+            } else {
+                console.error('[Delete] Server returned error:', res.status);
+                alert("Не удалось удалить узел. Ошибка сервера: " + res.status);
+            }
+        } catch (err) {
+            console.error('[Delete] Fetch error:', err);
+            alert("Ошибка при отправке запроса на удаление.");
+        }
+    };
+
+    window.closeModal = () => document.getElementById('nodeModal').style.display = 'none';
+
+    function _esc(str) {
+        return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
 </script>
 {% endblock %}

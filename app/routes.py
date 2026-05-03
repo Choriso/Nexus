@@ -6,7 +6,7 @@ main_bp = Blueprint('main', __name__)
 
 @main_bp.route("/")
 def start():
-    return render_template("startScreen.html", current_user=current_user)
+    return render_template("startScreen.html", current_user=current_user, hide_header=True)
 
 @main_bp.route('/geolocation')
 def geolocation():

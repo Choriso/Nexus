@@ -1,153 +1,376 @@
 /**
- * Graph Editor for Knowledge Base
+ * Graph Editor for Knowledge Base — Refactored
+ *
+ * Исправления:
+ * 1. Все ID нормализуются к строкам — нет конфликта int/string с D3.
+ * 2. openEditModal, saveNode, deleteNode, closeModal — определены здесь,
+ *    не в HTML. HTML-кнопки вызывают window.saveNode() и т.д.
+ * 3. editingNodeId хранится как строка.
+ * 4. Логика drag-end сохраняет позицию на сервер через API.
  */
 
 let simulation;
 let svg, g, link, node;
-let editingNodeId = null;
+let editingNodeId = null;  // всегда string или null
 
-const colors = {
-    'core': '#ff8906',
-    'work': '#2cb67d',
-    'hobby': '#7f5af0',
+const COLORS = {
+    'core':       '#ff8906',
+    'work':       '#2cb67d',
+    'hobby':      '#7f5af0',
     'psychology': '#3da9fc',
-    'default': '#72757e'
+    'default':    '#72757e'
 };
 
-// Экспортируем функцию в глобальную видимость сразу
-window.initGraph = function(rawNodes, rawConnections) {
+const CAT_LABELS = {
+    'work':       'Работа',
+    'hobby':      'Хобби',
+    'psychology': 'Психология'
+};
+
+// ─── Вспомогательные функции ──────────────────────────────────────────────────
+
+function nodeColor(d) {
+    return COLORS[d.category] || COLORS['default'];
+}
+
+function nodeRadius(d) {
+    if (d.category === 'core') return 18;
+    if (d.is_branch) return 13;
+    return 9;
+}
+
+// ─── Инициализация графа ──────────────────────────────────────────────────────
+
+window.initGraph = function(rawNodes, rawConnections, userName) {
     const canvas = document.getElementById('graphCanvas');
-    if (!canvas) return;
-    const width = canvas.clientWidth;
-    const height = 600;
+    if (!canvas) { console.error('graphCanvas not found'); return; }
 
-    let finalNodes = [...rawNodes];
-    let finalLinks = [];
+    const width  = canvas.clientWidth  || 900;
+    const height = canvas.clientHeight || 650;
 
-    let coreNode = finalNodes.find(n => n.category === 'core') || finalNodes[0];
-
-    const catTitles = {
-        'work': 'Работа',
-        'hobby': 'Хобби',
-        'psychology': 'Психология',
-        'default': 'Разное'
+    // 1. Ядро
+    const coreNode = {
+        id: 'user_core',
+        title: userName || 'Я',
+        category: 'core',
+        x: width / 2, y: height / 2,
+        fx: width / 2, fy: height / 2   // зафиксирован в центре
     };
 
-    const categories = [...new Set(finalNodes.map(n => n.category))].filter(c => c && c !== 'core');
+    const finalNodes = [coreNode];
+    const finalLinks = [];
 
-    categories.forEach(cat => {
-        let parentNode = finalNodes.find(n => n.category === cat && n.is_parent === true);
-        if (!parentNode) {
-            parentNode = {
-                id: `virtual_${cat}`,
-                title: catTitles[cat] || cat.toUpperCase(),
-                category: cat,
-                is_virtual: true,
-                x: width / 2,
-                y: height / 2
-            };
-            finalNodes.push(parentNode);
-        }
+    // 2. Ветки категорий
+    Object.entries(CAT_LABELS).forEach(([cat, label]) => {
+        finalNodes.push({ id: `branch_${cat}`, title: label, category: cat, is_branch: true });
+        finalLinks.push({ source: 'user_core', target: `branch_${cat}` });
+    });
 
-        if (coreNode && parentNode.id !== coreNode.id) {
-            finalLinks.push({ source: coreNode.id, target: parentNode.id, is_main: true });
-        }
+    const nodeIdSet = new Set(finalNodes.map(n => String(n.id)));
 
-        finalNodes.forEach(n => {
-            if (n.category === cat && n.id !== parentNode.id && !n.is_virtual) {
-                finalLinks.push({ source: parentNode.id, target: n.id, is_main: false });
-            }
+    // 3. Пользовательские узлы из БД
+    rawNodes.forEach(n => {
+        // FIX: Приводим id к строке, пропускаем core
+        const nodeId = String(n.id);
+        if (nodeId === 'user_core' || n.category === 'core') return;
+
+        let cat = String(n.category || 'hobby').toLowerCase().trim();
+        if (!CAT_LABELS[cat]) cat = 'hobby';
+
+        finalNodes.push({
+            ...n,
+            id: nodeId,          // <-- всегда string
+            category: cat,
+            // Если координаты 0 или null — пусть D3 расставит сам
+            x: n.x || undefined,
+            y: n.y || undefined,
+        });
+        nodeIdSet.add(nodeId);
+
+        // Связь: ветка → узел
+        finalLinks.push({ source: `branch_${cat}`, target: nodeId });
+    });
+
+    // 4. Пользовательские связи из БД
+    (rawConnections || []).forEach(c => {
+        const sourceId = String(c.from ?? c.from_node_id ?? c.source ?? '');
+        const targetId = String(c.to ?? c.to_node_id ?? c.target ?? '');
+        if (!sourceId || !targetId) return;
+        if (!nodeIdSet.has(sourceId) || !nodeIdSet.has(targetId)) return;
+
+        finalLinks.push({
+            id: String(c.id ?? `${sourceId}_${targetId}`),
+            source: sourceId,
+            target: targetId,
+            label: c.label || ''
         });
     });
 
-    svg = d3.select("#graphCanvas");
-    svg.selectAll("*").remove();
-    g = svg.append("g");
+    console.log('[Graph] nodes:', finalNodes.length, 'links:', finalLinks.length);
 
-    const zoom = d3.zoom().on("zoom", (event) => {
-        g.attr("transform", event.transform);
-    });
-    svg.call(zoom).on("dblclick.zoom", null);
+    // ─── D3 ───────────────────────────────────────────────────────────────────
+
+    svg = d3.select('#graphCanvas');
+    svg.selectAll('*').remove();
+
+    g = svg.append('g');
+
+    // Zoom & pan
+    const zoom = d3.zoom()
+        .scaleExtent([0.3, 3])
+        .on('zoom', e => g.attr('transform', e.transform));
+    svg.call(zoom).on('dblclick.zoom', null);
 
     simulation = d3.forceSimulation(finalNodes)
-        .force("link", d3.forceLink(finalLinks).id(d => d.id).distance(80))
-        .force("charge", d3.forceManyBody().strength(-150))
-        .force("center", d3.forceCenter(width / 2, height / 2))
-        .force("collision", d3.forceCollide().radius(30));
+        .force('link',      d3.forceLink(finalLinks).id(d => d.id).distance(90))
+        .force('charge',    d3.forceManyBody().strength(-250))
+        .force('center',    d3.forceCenter(width / 2, height / 2))
+        .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 8));
 
-    link = g.append("g").selectAll("line").data(finalLinks).join("line")
-        .attr("stroke", "#444b5a").attr("stroke-opacity", 0.6);
+    // Линки
+    link = g.append('g')
+        .attr('class', 'links')
+        .selectAll('line')
+        .data(finalLinks)
+        .join('line')
+        .attr('stroke', '#444b5a')
+        .attr('stroke-opacity', 0.45)
+        .attr('stroke-width', 1.5);
 
-    node = g.append("g").selectAll(".node").data(finalNodes).join("g")
-        .attr("class", "node")
-        .call(d3.drag()
-            .on("start", (e, d) => {
-                if (!e.active) simulation.alphaTarget(0.3).restart();
-                d.fx = d.x; d.fy = d.y;
-            })
-            .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
-            .on("end", (e, d) => {
-                if (!e.active) simulation.alphaTarget(0);
-                d.fx = null; d.fy = null;
-            }));
+    // Узлы
+    node = g.append('g')
+        .attr('class', 'nodes')
+        .selectAll('.node')
+        .data(finalNodes)
+        .join('g')
+        .attr('class', 'node')
+        .call(
+            d3.drag()
+                .on('start', (e, d) => {
+                    if (!e.active) simulation.alphaTarget(0.3).restart();
+                    d.fx = d.x; d.fy = d.y;
+                })
+                .on('drag', (e, d) => {
+                    d.fx = e.x; d.fy = e.y;
+                })
+                .on('end', (e, d) => {
+                    if (!e.active) simulation.alphaTarget(0);
+                    // Снимаем фиксацию только у не-core узлов
+                    if (d.category !== 'core') {
+                        // Сохраняем позицию на сервер
+                        _saveNodePosition(d.id, d.x, d.y);
+                        d.fx = null; d.fy = null;
+                    }
+                })
+        );
 
-    node.append("circle")
-        .attr("r", d => d.category === 'core' ? 15 : 10)
-        .attr("fill", d => colors[d.category] || colors['default'])
-        .attr("stroke", "#16161a");
+    node.append('circle')
+        .attr('r',            nodeRadius)
+        .attr('fill',         nodeColor)
+        .attr('stroke',       '#16161a')
+        .attr('stroke-width', 2);
 
-    node.append("text")
-        .attr("dy", -15)
-        .attr("text-anchor", "middle")
-        .style("fill", "#94a1b2")
-        .style("font-size", "12px")
+    node.append('text')
+        .attr('dy', d => -nodeRadius(d) - 6)
+        .attr('text-anchor', 'middle')
+        .style('fill',      '#94a1b2')
+        .style('font-size', '12px')
+        .style('pointer-events', 'none')
+        .style('user-select',    'none')
         .text(d => d.title);
 
-    node.on("click", (event, d) => {
-        if (d.is_virtual) return;
-        d3.selectAll("circle").attr("stroke", "#16161a").attr("stroke-width", 1);
-        d3.select(event.currentTarget).select("circle").attr("stroke", "#7f5af0").attr("stroke-width", 3);
+    // ─── События ─────────────────────────────────────────────────────────────
 
-        // Вызов функции из интересов
-        if (window.onNodeClick) window.onNodeClick(d.id);
+    // ЛКМ — показать панель / вызвать внешний колбэк
+    node.on('click', (event, d) => {
+        if (d.category === 'core' || d.is_branch) return;
+        // Подсветка
+        d3.selectAll('circle').attr('stroke', '#16161a').attr('stroke-width', 2);
+        d3.select(event.currentTarget).select('circle')
+            .attr('stroke', '#7f5af0').attr('stroke-width', 3);
+
+        if (typeof window.onNodeClick === 'function') window.onNodeClick(d.id);
     });
 
-    simulation.on("tick", () => {
-        link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
-            .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-        node.attr("transform", d => `translate(${d.x},${d.y})`);
+    // ПКМ — открыть модальное окно редактирования
+    node.on('contextmenu', (event, d) => {
+        event.preventDefault();
+        if (d.category === 'core' || d.is_branch) return;
+        window.openEditModal(d);
+    });
+
+    // Tick
+    simulation.on('tick', () => {
+        link
+            .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+            .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+        node.attr('transform', d => `translate(${d.x ?? 0},${d.y ?? 0})`);
     });
 };
 
-window.addNode = function() {
-    editingNodeId = null;
-    const modal = document.getElementById('nodeModal');
-    if (modal) modal.style.display = 'flex';
-};
+// ─── Добавление узла ──────────────────────────────────────────────────────────
 
-window.onNodeClick = function(nodeId) {
-    const list = document.getElementById('resultsList');
-    if (list) list.innerHTML = '<div>Загрузка...</div>';
+window.addNode = async function() {
+    const title = prompt('Название нового узла:');
+    if (!title) return;
 
-    // 1. Находим данные узла в симуляции D3, чтобы узнать его категорию
-    const clickedNode = node.data().find(n => n.id === nodeId);
-    const category = clickedNode ? clickedNode.category : 'psychology';
-
-    console.log(`Клик по узлу ${nodeId}, категория: ${category}`);
-
-    // 2. Добавляем категорию в запрос как Query Parameter
-    fetch(`/api/graph/match/${nodeId}?category=${category}`)
-        .then(res => res.json())
-        .then(matches => {
-            if (window.renderMatches) {
-                window.renderMatches(matches);
-            } else {
-                // Если функции рендера нет в глобале, выведем просто список
-                list.innerHTML = matches.map(m => `<div>${m.user_name} - ${m.compatibility}%</div>`).join('');
-            }
-        })
-        .catch(err => {
-            console.error("Ошибка поиска:", err);
-            if (list) list.innerHTML = '<div>Ошибка загрузки</div>';
+    try {
+        const res = await fetch('/knowledge_graph/node', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, category: 'hobby', description: '' })
         });
+        const data = await res.json();
+        if (data.success) {
+            // Перезагружаем граф с сервера, чтобы не дублировать логику добавления
+            await _reloadGraph();
+        } else {
+            alert('Ошибка: ' + (data.message || 'неизвестная'));
+        }
+    } catch (err) {
+        console.error('[addNode]', err);
+    }
 };
+
+// ─── Сохранение позиций ───────────────────────────────────────────────────────
+
+window.saveGraphPositions = async function() {
+    if (!simulation) return;
+
+    const positions = simulation.nodes()
+        .filter(d => d.category !== 'core' && !d.is_branch)
+        .map(d => ({ id: d.id, x: Math.round(d.x), y: Math.round(d.y) }));
+
+    for (const pos of positions) {
+        await _saveNodePosition(pos.id, pos.x, pos.y);
+    }
+    _showToast('Позиции сохранены ✓');
+};
+
+async function _saveNodePosition(nodeId, x, y) {
+    // Пропускаем служебные узлы
+    if (typeof nodeId === 'string' && nodeId.startsWith('branch_')) return;
+    if (nodeId === 'user_core') return;
+
+    try {
+        await fetch(`/knowledge_graph/node/${nodeId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ x: Math.round(x), y: Math.round(y) })
+        });
+    } catch (err) {
+        console.warn('[savePos]', err);
+    }
+}
+
+// ─── Модальное окно (ЕДИНОЕ место определения) ───────────────────────────────
+
+window.openEditModal = function(nodeData) {
+    editingNodeId = String(nodeData.id);  // всегда string
+
+    document.getElementById('nodeTitle').value       = nodeData.title       || '';
+    document.getElementById('nodeDescription').value = nodeData.description || '';
+    document.getElementById('nodeCategory').value    = nodeData.category    || '';
+
+    const modal = document.getElementById('nodeModal');
+    modal.style.display = 'flex';
+};
+
+window.closeModal = function() {
+    editingNodeId = null;
+    document.getElementById('nodeModal').style.display = 'none';
+};
+
+window.saveNode = async function() {
+    if (!editingNodeId) return;
+
+    const payload = {
+        title:       document.getElementById('nodeTitle').value,
+        description: document.getElementById('nodeDescription').value,
+        category:    document.getElementById('nodeCategory').value,
+    };
+
+    try {
+        const res = await fetch(`/knowledge_graph/node/${editingNodeId}`, {
+            method:  'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(payload)
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            window.closeModal();
+            await _reloadGraph();
+        } else {
+            alert('Ошибка сохранения: ' + (data.message || '?'));
+        }
+    } catch (err) {
+        console.error('[saveNode]', err);
+    }
+};
+
+window.deleteNode = async function() {
+    if (!editingNodeId) return;
+    if (!confirm('Удалить узел?')) return;
+
+    try {
+        const res = await fetch(`/knowledge_graph/node/${editingNodeId}`, { method: 'DELETE' });
+        const data = await res.json();
+
+        if (data.success) {
+            window.closeModal();
+            await _reloadGraph();
+        } else {
+            alert('Ошибка удаления: ' + (data.message || '?'));
+        }
+    } catch (err) {
+        console.error('[deleteNode]', err);
+    }
+};
+
+// Закрытие по клику на фон
+window.addEventListener('click', e => {
+    const modal = document.getElementById('nodeModal');
+    if (modal && e.target === modal) window.closeModal();
+});
+
+// ─── Перезагрузка данных с API ────────────────────────────────────────────────
+
+async function _reloadGraph() {
+    try {
+        const res  = await fetch('/knowledge_graph_data');
+        const data = await res.json();
+
+        // Нормализуем id к строкам — на случай если сервер вернул числа
+        const nodes       = data.nodes.map(n => ({ ...n, id: String(n.id) }));
+        const connections = data.connections || [];
+
+        // Читаем имя из DOM (оно уже вписано при первой загрузке)
+        const userName = document.getElementById('graphCanvas')?.dataset.username || '';
+        window.initGraph(nodes, connections, userName);
+    } catch (err) {
+        console.error('[reloadGraph]', err);
+    }
+}
+
+// ─── Toast-уведомление ────────────────────────────────────────────────────────
+
+function _showToast(msg) {
+    let toast = document.getElementById('_graphToast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = '_graphToast';
+        Object.assign(toast.style, {
+            position: 'fixed', bottom: '24px', left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#2cb67d', color: '#fff',
+            padding: '10px 20px', borderRadius: '8px',
+            fontWeight: '600', zIndex: '9999',
+            transition: 'opacity 0.3s'
+        });
+        document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.opacity = '1';
+    setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+}

@@ -20,32 +20,33 @@ preprocess.py — Предобработка сырого JSON (text + scores) �
 
 import argparse
 import json
-import re
-import numpy as np
+import os
+import sys
 from pathlib import Path
-from tqdm import tqdm
 
+import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
+from tqdm import tqdm
+
+# Garantir raiz do projeto no path ao correr ``python ml/preprocess.py``
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from app.ai_profiler.text_utils import clean_user_text
 
 
-def get_manual_features(text: str) -> list:
+def get_manual_features(text: str) -> list[float]:
+    """Extrai quatro escalares alinhados ao :class:`AIProfiler`."""
     if not text:
         return [0.0, 0.0, 0.0, 0.0]
     length = min(len(text) / 1000, 1.0)
     letters = [c for c in text if c.isalpha()]
     caps = sum(1 for c in letters if c.isupper()) / (len(letters) + 1) if letters else 0.0
-    excl = min(text.count('!') / 5, 1.0)
-    ques = min(text.count('?') / 5, 1.0)
+    excl = min(text.count("!") / 5, 1.0)
+    ques = min(text.count("?") / 5, 1.0)
     return [length, caps, excl, ques]
-
-
-def clean_text(text: str) -> str:
-    if not text:
-        return ""
-    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'[^а-яА-ЯёЁa-zA-Z0-9?!.,\s]', '', text)
-    return re.sub(r'\s+', ' ', text).strip()
 
 
 def main():
@@ -62,9 +63,12 @@ def main():
         raw_data = json.load(f)
     print(f"Загружено {len(raw_data)} записей")
 
-    model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2', device=device)
+    embedding_name = os.environ.get(
+        "EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2"
+    )
+    model = SentenceTransformer(embedding_name, device=device)
 
-    texts = [clean_text(item["text"]).lower() for item in raw_data]
+    texts = [clean_user_text(item["text"]).lower() for item in raw_data]
 
     print("Вычисляю эмбеддинги...")
     embeddings = model.encode(
@@ -76,7 +80,8 @@ def main():
 
     result = []
     for i, item in enumerate(tqdm(raw_data, desc="Собираю признаки")):
-        manual = get_manual_features(item["text"])
+        cleaned = clean_user_text(item["text"])
+        manual = get_manual_features(cleaned)
         features = np.concatenate([embeddings[i], manual]).tolist()  # (388,)
         result.append({
             "features": features,

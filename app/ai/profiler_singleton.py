@@ -1,14 +1,5 @@
-# profiler_singleton.py
-from app.ai_profiler.core import AIProfiler
-import threading
+"""Re-export do profiler singleton canónico em :mod:`app.ai_profiler`."""
 
-_profiler = None
-_lock = threading.Lock()
+from app.ai_profiler import get_profiler
 
-def get_profiler() -> AIProfiler:
-    global _profiler
-    if _profiler is None:
-        with _lock:
-            if _profiler is None:
-                _profiler = AIProfiler()
-    return _profiler
+__all__ = ["get_profiler"]

@@ -1,5 +1,4 @@
 from threading import Lock
-
 from .core import AIProfiler
 
 _profiler = None

@@ -46,10 +46,10 @@ def profile():
         favorite_interests = db_sess.query(Interest).options(joinedload(Interest.user)).filter(
             Interest.id.in_(favorite_ids)
         ).all() if favorite_ids else []
-        return render_template("profile.html", title="Профиль", 
-                            interest=created_interests, 
-                            favorite_interests=favorite_interests,
-                            current_user=current_user)
+        return render_template("profile.html", title="Профиль",
+                               interest=created_interests,
+                               favorite_interests=favorite_interests,
+                               current_user=current_user)
 
 
 @profile_bp.route("/upload_avatar", methods=["POST"])
@@ -152,20 +152,20 @@ def update_profile():
         user = db_sess.get(User, current_user.id)
         if not user:
             return jsonify({"success": False, "message": "Пользователь не найден"}), 404
-        
+
         if "name" in data:
             user.name = data["name"]
-        
+
         if "information" in data:
             user.information = data["information"]
-        
+
         if "password" in data and data["password"]:
             # Здесь можно добавить проверку кода подтверждения через email
             # Пока просто обновляем пароль
             user.set_password(data["password"])
-        
+
         db_sess.commit()
-    
+
     return jsonify({"success": True, "message": "Настройки сохранены"})
 
 
@@ -207,7 +207,7 @@ def knowledge_graph():
         ]
 
     return render_template(
-        "knowledge_graph.html",
+        "index.html",
         nodes=nodes,
         connections=connections,
         current_user=current_user
@@ -392,6 +392,7 @@ def get_graph_data():
             for c in connections_db
         ]
     return jsonify({"nodes": nodes, "connections": connections})
+
 
 # Настраиваем веса под категории
 CATEGORY_CONFIG = {

@@ -14,16 +14,12 @@ def register():
     email = data.get("email")
     password = data.get("password")
     full_name = data.get("fullName")
-    accept_policy = data.get("acceptPolicy", 0)
     allow_location = data.get("allowLocation", 0)
 
     with get_db_session() as db_sess:
         # Проверка на существующего пользователя
         if db_sess.query(User).filter(User.email == email).first():
             return jsonify({"success": False, "message": "Такой пользователь уже зарегистрирован."})
-
-        if not accept_policy:
-            return jsonify({"success": False, "message": "Вы должны принять политику конфиденциальности."})
 
         email_regex = r"^[\w\.-]+@[\w\.-]+\.\w+$"
         if not re.match(email_regex, email or ""):

@@ -1,3 +1,0 @@
-"""
-AI package for Connectify
-"""

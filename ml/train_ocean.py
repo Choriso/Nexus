@@ -159,7 +159,7 @@ def train_model(train_loader, val_loader, config):
     )
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=12, verbose=True
+        optimizer, mode='max', factor=0.5, patience=12
     )
 
     early_stopping = EarlyStopping(patience=config["es_patience"])

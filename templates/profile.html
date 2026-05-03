@@ -94,42 +94,6 @@
 
             </div>
         </div>
-        <div class="profile-interests-grid">
-            <div class="interests-column">
-                <h3 class="section-title">Мои Интересы</h3>
-                <div class="interests-list">
-                    {% for item in interest %}
-                    <div class="interest-mini-card">
-                        <span class="interest-title">{{ item.title }}</span>
-                        <p class="interest-desc-short">{{ item.description[:60] }}...</p>
-                        <a href="/interest_delete/{{ item.id }}" class="link-danger">Удалить</a>
-                    </div>
-                    {% endfor %}
-                    {% if not interest %}
-                    <p class="empty-state">Пока пусто</p>
-                    {% endif %}
-                </div>
-            </div>
-
-            <div class="interests-column">
-                <h3 class="section-title">Избранное</h3>
-                <div class="interests-list">
-                    {% for item in favorite_interests %}
-                    <div class="interest-mini-card">
-                        <a class="interest-title"
-                           href="/viewInteres?user_id={{ item.user.id }}&interest_id={{ item.id }}">
-                            {{ item.title }}
-                        </a>
-                        <span class="author-tag">от {{ item.user.name }}</span>
-                        <button onclick="removeFavorite({{ item.id }})" class="link-danger-btn">Убрать</button>
-                    </div>
-                    {% endfor %}
-                    {% if not favorite_interests %}
-                    <p class="empty-state">Ничего не добавлено</p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
 
         <div class="profile-actions-footer">
             <a href="/settings" class="btn-primary">Настройки</a>

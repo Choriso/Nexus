@@ -6,7 +6,6 @@ from data.interest import Interest
 from data.chat import Chat
 from data.favorite_interest import FavoriteInterest
 from app.db import get_db_session
-from get_similar import line_vector, cosdis
 import sqlalchemy as sa
 
 interests_bp = Blueprint("interests", __name__)
@@ -17,7 +16,7 @@ def index():
     with get_db_session() as db_sess:
         # Используем joinedload для eager loading связанных пользователей
         query = db_sess.query(Interest).options(joinedload(Interest.user))
-        
+
         if current_user.is_authenticated:
             interest = query.filter(Interest.user_id != current_user.id).all()
             # Получаем ID избранных интересов для текущего пользователя
@@ -27,10 +26,10 @@ def index():
         else:
             interest = query.all()
             favorite_ids = set()
-        
+
         # Переворачиваем список, чтобы новые были первыми
         interest = list(reversed(interest))
-    
+
     return render_template("index.html", interest=interest, current_user=current_user, favorite_ids=favorite_ids)
 
 
@@ -50,7 +49,7 @@ def view_interest():
         if not interest or not interest.user:
             abort(404)
         user = interest.user
-    
+
     return render_template("view_interes.html", title="", interests=interest, user=user)
 
 
@@ -170,7 +169,7 @@ def create_chat_with_user(user_id):
     """Создаёт или получает существующий чат с пользователем"""
     if user_id == current_user.id:
         return jsonify({"success": False, "message": "Нельзя создать чат с самим собой"}), 400
-    
+
     with get_db_session() as db_sess:
         # Проверяем, существует ли уже чат
         chat = db_sess.execute(
@@ -179,12 +178,12 @@ def create_chat_with_user(user_id):
                 ((Chat.user1_id == user_id) & (Chat.user2_id == current_user.id))
             )
         ).scalar()
-        
+
         if not chat:
             chat = Chat(user1_id=current_user.id, user2_id=user_id)
             db_sess.add(chat)
             db_sess.commit()
-        
+
         return jsonify({"success": True, "chat_id": chat.id})
 
 
@@ -197,13 +196,13 @@ def toggle_favorite(interest_id):
         interest = db_sess.query(Interest).filter(Interest.id == interest_id).first()
         if not interest:
             return jsonify({"success": False, "message": "Интерес не найден"}), 404
-        
+
         # Проверяем, есть ли уже в избранном
         favorite = db_sess.query(FavoriteInterest).filter(
             FavoriteInterest.user_id == current_user.id,
             FavoriteInterest.interest_id == interest_id
         ).first()
-        
+
         if favorite:
             # Удаляем из избранного
             db_sess.delete(favorite)
@@ -226,18 +225,18 @@ def favorites():
         favorites_query = db_sess.query(FavoriteInterest).filter(
             FavoriteInterest.user_id == current_user.id
         )
-        
+
         # Получаем ID избранных интересов
         favorite_ids = [fav.interest_id for fav in favorites_query.all()]
-        
+
         # Загружаем интересы с авторами
         interests = db_sess.query(Interest).options(joinedload(Interest.user)).filter(
             Interest.id.in_(favorite_ids)
         ).all()
-        
+
         # Получаем уникальных авторов
         authors = list(set([interest.user for interest in interests]))
-    
+
     return render_template("index.html", interest=interests, current_user=current_user, show_favorites=True)
 
 

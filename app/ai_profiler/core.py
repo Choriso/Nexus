@@ -1,11 +1,17 @@
+from __future__ import annotations
+
+import os
+import re
+from collections import Counter
+from typing import Any
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer, util
-import os
-import re
-import numpy as np
-from collections import Counter
+
+from .text_utils import clean_user_text
 
 MBTI_TYPES = [
     "INTJ", "INTP", "ENTJ", "ENTP",
@@ -25,17 +31,29 @@ BIN_EDGES = np.linspace(0, 1, NUM_BINS + 1)[1:-1]
 BIN_CENTERS = np.linspace(1 / (2 * NUM_BINS), 1 - 1 / (2 * NUM_BINS), NUM_BINS).astype(np.float32)
 
 
-def scores_to_bins(y, num_bins=NUM_BINS):
-    """Конвертирует непрерывный score [0,1] в индекс бина [0, num_bins-1]."""
+def scores_to_bins(y: np.ndarray | list[float], num_bins: int = NUM_BINS) -> np.ndarray:
+    """Converte contínuos OCEAN em [0, 1] para índices de bin ordinais.
+
+    Args:
+        y: Vetor de scores no intervalo [0, 1] (clip aplicado).
+        num_bins: Número de bins (deve coincidir com ``NUM_BINS`` da cabeça da rede).
+
+    Returns:
+        Array ``int64`` de índices de classe por traço.
+    """
     y = np.clip(y, 0.0, 1.0)
     bins = np.digitize(y, BIN_EDGES, right=False)
     return bins.astype(np.int64)
 
 
-def bins_to_score(logits):
-    """
-    Конвертирует логиты (B, T, K) → предсказанные scores (B, T) через матожидание.
-    bin_values — фиксированная константа, не обучается.
+def bins_to_score(logits: torch.Tensor) -> torch.Tensor:
+    """Converte logits (B, T, K) em scores contínuos via esperança sob softmax.
+
+    Args:
+        logits: Tensor ``(batch, traits, num_bins)``.
+
+    Returns:
+        Tensor ``(batch, traits)`` com valores no suporte [0, 1] (centros dos bins).
     """
     probs = F.softmax(logits, dim=-1)
     num_bins = logits.shape[-1]
@@ -78,10 +96,10 @@ class ResidualBlock(nn.Module):
         return self.act(x + self.block(x))
 
 
-# [ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ ДО КЛАССА PersonalityClassifier]
-
 class PersonalityClassifier(nn.Module):
-    def __init__(self, input_size=388, dropout=0.2, num_bins=NUM_BINS):  # Увеличен dropout
+    """Classificador ordinal OCEAN (cinco traços × ``num_bins`` classes)."""
+
+    def __init__(self, input_size=388, dropout=0.2, num_bins=NUM_BINS):
         super().__init__()
         self.num_bins = num_bins
 
@@ -113,14 +131,14 @@ class PersonalityClassifier(nn.Module):
         # Head инициализируем отдельно для мягкого старта
         nn.init.xavier_uniform_(self.classifier.weight, gain=0.1)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.projection(x)
         x = self.residual(x)
         x = self.bottleneck(x)
         logits = self.classifier(x)
         return logits.view(-1, 5, self.num_bins)
 
-    def predict_scores(self, x):
+    def predict_scores(self, x: torch.Tensor) -> np.ndarray:
         self.eval()
         with torch.no_grad():
             logits = self.forward(x)
@@ -156,11 +174,14 @@ class MBTIClassifier(nn.Module):
 # ---------------------------------------------------------------
 
 class AIProfiler:
-    def __init__(self, db=None, use_local_models=True):
+    """Orquestra SBERT, classificador OCEAN ordinal e MBTI opcional."""
+
+    def __init__(self, db: Any = None, use_local_models: bool = True) -> None:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.bert_model = SentenceTransformer(
-            'paraphrase-multilingual-MiniLM-L12-v2', device=self.device
+        embedding_name = os.environ.get(
+            "EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2"
         )
+        self.bert_model = SentenceTransformer(embedding_name, device=self.device)
         self.mbti_classes = MBTI_TYPES
 
         self.model = PersonalityClassifier(input_size=388, num_bins=NUM_BINS).to(self.device)
@@ -206,7 +227,7 @@ class AIProfiler:
         exp_logits = np.exp(logits - np.max(logits))
         return exp_logits / exp_logits.sum()
 
-    def get_manual_features(self, text):
+    def get_manual_features(self, text: str) -> list[float]:
         if not text:
             return [0.0, 0.0, 0.0, 0.0]
         length = min(len(text) / 1000, 1.0)
@@ -220,14 +241,14 @@ class AIProfiler:
         ques = min(text.count('?') / 5, 1.0)
         return [length, caps, excl, ques]
 
-    def analyze_profile(self, text):
-        clean_text = self.clean_text(text)
-        if not clean_text:
+    def analyze_profile(self, text: str) -> dict[str, Any] | None:
+        cleaned = self.clean_text(text)
+        if not cleaned:
             return None
 
-        m_feats = self.get_manual_features(text)
+        m_feats = self.get_manual_features(cleaned)
         emb = self.bert_model.encode(
-            [clean_text.lower()], convert_to_tensor=True
+            [cleaned.lower()], convert_to_tensor=True
         )
         manual_tensor = (
             torch.tensor(m_feats, dtype=torch.float32).to(self.device).unsqueeze(0)
@@ -249,12 +270,15 @@ class AIProfiler:
         mbti_from_ocean = self.infer_mbti(ocean_scores)
         ocean_soft = self._ocean_to_soft_probs(mbti_from_ocean)
 
-        w_model = 0.7 if self.has_mbti_model else 0.3
+        # Peso da rede MBTI vs. prior derivado de OCEAN. Sem modelo MBTI treinado,
+        # evitar misturar com softmax uniforme (ruído). Sobrescrever com
+        # NEXUS_MBTI_NEURAL_BLEND_WEIGHT em [0, 1].
+        w_model = self._mbti_neural_blend_weight()
         blended_probs = (w_model * mbti_probs) + ((1 - w_model) * ocean_soft)
         mbti_type = self.mbti_classes[int(np.argmax(blended_probs))]
 
-        communication = self.infer_communication_style(text, ocean_scores)
-        interests = self.extract_interests(text)
+        communication = self.infer_communication_style(cleaned, ocean_scores)
+        interests = self.extract_interests(cleaned)
 
         ocean_conf = float(
             np.mean(np.abs(np.array(ocean_scores) - 0.5)) * 2
@@ -274,7 +298,16 @@ class AIProfiler:
             ),
         }
 
-    def infer_mbti(self, scores):
+    def _mbti_neural_blend_weight(self) -> float:
+        env = os.environ.get("NEXUS_MBTI_NEURAL_BLEND_WEIGHT")
+        if env is not None:
+            try:
+                return float(max(0.0, min(1.0, float(env.strip()))))
+            except ValueError:
+                pass
+        return 0.7 if self.has_mbti_model else 0.0
+
+    def infer_mbti(self, scores: list[float]) -> str:
         o, c, e, a, n = scores
         mbti = [
             "E" if e >= 0.5 else "I",
@@ -286,7 +319,7 @@ class AIProfiler:
             mbti[0] = "I"
         return "".join(mbti)
 
-    def infer_communication_style(self, text, scores):
+    def infer_communication_style(self, text: str, scores: list[float]) -> dict[str, Any]:
         c_text = self.clean_text(text)
         if not c_text:
             return {
@@ -353,7 +386,7 @@ class AIProfiler:
             "collaboration_style": collaboration_style,
         }
 
-    def extract_interests(self, text):
+    def extract_interests(self, text: str) -> dict[str, Any]:
         normalized = self.clean_text(text).lower()
         tokens = [t for t in re.findall(r"[а-яa-z0-9]+", normalized) if len(t) > 2]
         counts = Counter(tokens)
@@ -430,12 +463,9 @@ class AIProfiler:
             "values": values,
         }
 
-    def clean_text(self, text):
-        if not text:
-            return ""
-        text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
-        text = re.sub(r'[^а-яА-ЯёЁa-zA-Z0-9?!.,\s]', '', text)
-        return re.sub(r'\s+', ' ', text).strip()
+    def clean_text(self, text: str | None) -> str:
+        """Delega para :func:`clean_user_text` (limite de tamanho e sanitização)."""
+        return clean_user_text(text)
 
     def calculate_compatibility(self, vec1, vec2):
         if not vec1 or not vec2:
@@ -444,14 +474,26 @@ class AIProfiler:
         distance = np.sqrt(np.mean((v1 - v2) ** 2))
         return round(float(max(0, 100 * (1 - distance))), 2)
 
-    def calculate_text_similarity(self, texts1, texts2):
-        all_texts = texts1 + texts2
-        embeddings = self.bert_model.encode(
-            all_texts, batch_size=32, convert_to_tensor=True
-        )
-        emb1 = embeddings[: len(texts1)]
-        emb2 = embeddings[len(texts1):]
-        return util.cos_sim(emb1, emb2).diagonal().cpu().numpy()
+    def calculate_text_similarity(self, texts1: list[str] | str, texts2: list[str] | str):
+        # Превращаем в списки, если пришла одиночная строка
+        if isinstance(texts1, str): texts1 = [texts1]
+        if isinstance(texts2, str): texts2 = [texts2]
+
+        # Кодируем тексты отдельно
+        emb1 = self.bert_model.encode(texts1, convert_to_tensor=True)
+        emb2 = self.bert_model.encode(texts2, convert_to_tensor=True)
+
+        # Считаем косинусное сходство
+        cos_sim_matrix = util.cos_sim(emb1, emb2)
+
+        # Если мы сравниваем один к одному (например, заголовки нод)
+        if len(texts1) == len(texts2) == 1:
+            return cos_sim_matrix.item()  # Возвращаем просто число (float)
+
+        # Если списки разной длины, diagonal() не сработает.
+        # Обычно в таком случае берут среднее сходство или возвращают всю матрицу.
+        # Для твоего лога (1x16 и 368x1) лучше вернуть среднее:
+        return cos_sim_matrix.cpu().numpy()
 
     @staticmethod
     def get_compatible_mbti(mbti_type):

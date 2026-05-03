@@ -18,7 +18,14 @@ def create_app() -> Flask:
 
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///chat.db")
     app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "static/uploads/")
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev_secret_key_change_me")
+
+    _secret = os.environ.get("SECRET_KEY")
+    _default_dev_secret = "dev_secret_key_change_me"
+    if os.environ.get("FLASK_ENV") == "production" and not _secret:
+        raise ValueError(
+            "SECRET_KEY must be set in production (environment variable)."
+        )
+    app.config["SECRET_KEY"] = _secret or _default_dev_secret
 
     db_session.global_init(app.config["SQLALCHEMY_DATABASE_URI"])
 
