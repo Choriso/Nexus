@@ -16,7 +16,7 @@
 *   **Dataset**: Модель обучена и валидирована на корпусе данных из 1726 примеров с использованием семантических эмбеддингов SBERT[cite: 6, 7].
 
 ### Отчет о тренировке
-![Training Report](Nexus/ml/artifacts/training_history.png)
+![Training Report](ml/artifacts/training_history.png)
 
 ## Технологический стек
 *   **Backend**: Python, Flask, Celery[cite: 6].
