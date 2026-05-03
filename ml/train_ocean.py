@@ -82,36 +82,29 @@ class PersonalityDataset(Dataset):
 
 def ordinal_loss(logits, target_bins, sample_weights):
     """
-    Ординальный BCE-лосс без штрафа на std.
-
-    Почему убрали std_penalty:
-      - std_penalty форсировал разброс предсказаний НЕЗАВИСИМО от ошибки,
-        что приводило к случайным предсказаниям и отрицательному R².
-      - На малом датасете (1.7k) модель не может одновременно
-        минимизировать BCE и поддерживать искусственный std.
-
-    Вместо этого добавлен label_smoothing: он предотвращает
-    вырождение в константу через смягчение таргетов.
+    ИСПРАВЛЕННЫЙ Ординальный лосс.
+    Теперь и таргеты, и предсказания работают в одной логике: P(Y <= k)
     """
     B, T, K = logits.shape
     device = logits.device
 
-    # Кумулятивные таргеты: для бина b маска [1,1,...,1,0,0,...,0]
+    # range_tensor: [0, 1, 2, ..., K-2]
     range_tensor = torch.arange(K - 1, device=device).view(1, 1, -1)
-    cum_targets = (target_bins.unsqueeze(-1) > range_tensor).float()
 
-    # Label smoothing: смягчаем таргеты от {0,1} к {eps, 1-eps}
-    smoothing = 0.05
+    # ПРАВИЛЬНО: Цель = 1, если истинный бин попал в порог <= k
+    cum_targets = (target_bins.unsqueeze(-1) <= range_tensor).float()
+
+    # Снижаем smoothing до 0.02 — на 1.7к данных 0.05 слишком сильно размывает результат
+    smoothing = 0.02
     cum_targets = cum_targets * (1 - smoothing) + (1 - cum_targets) * smoothing
 
-    # Кумулятивные вероятности через softmax + cumsum
+    # Предсказание модели: вероятность P(Y <= k) через сумму софтмакса
     probs = F.softmax(logits, dim=-1)
     cum_probs = torch.cumsum(probs, dim=-1)[:, :, :-1].clamp(1e-6, 1.0 - 1e-6)
 
-    # BCE по всем порогам
+    # Теперь BCE сравнивает однотипные вероятности
     bce = F.binary_cross_entropy(cum_probs, cum_targets, reduction='none')
 
-    # Взвешенный mean по батчу
     sample_weights = sample_weights.to(device)
     loss = (bce.mean(dim=(1, 2)) * sample_weights).mean()
 
@@ -155,119 +148,70 @@ class EarlyStopping:
 # ---------------------------------------------------------------
 
 def train_model(train_loader, val_loader, config):
-    """
-    Изменения относительно исходной версии:
-      1. LR снижен: 3e-4 вместо 1e-3 — на маленьких данных нужен аккуратный шаг
-      2. weight_decay снижен: 1e-5 вместо 1e-4 — меньше L2-давления
-      3. Scheduler: ReduceLROnPlateau вместо CosineAnnealingWarmRestarts.
-         Рестарты косинусного планировщика дестабилизируют обучение
-         (резкий прыжок LR убивал накопленные знания).
-      4. R² считается правильно: sklearn.r2_score по матрице (N, 5)
-      5. MAE добавлен как вторичная метрика для мониторинга
-    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Устройство: {device}")
-
     model = PersonalityClassifier(input_size=388, num_bins=NUM_BINS).to(device)
 
+    # Используем чуть более консервативный LR для начала
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config["lr"],
         weight_decay=config["weight_decay"],
     )
 
-    # ReduceLROnPlateau: уменьшает LR, если val_loss не улучшается
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode='max',       # следим за R² (больше = лучше)
-        factor=0.5,       # LR * 0.5 при плато
-        patience=10,      # 10 эпох без улучшения → снижаем LR
-        min_lr=1e-6,
-        verbose=True,
+        optimizer, mode='max', factor=0.5, patience=12, verbose=True
     )
 
-    early_stopping = EarlyStopping(
-        patience=config["es_patience"],
-        min_delta=5e-4,
-    )
-
-    history = {
-        "train_loss": [], "val_loss": [],
-        "r2_scores": [], "mae_scores": [], "lr": [],
-    }
+    early_stopping = EarlyStopping(patience=config["es_patience"])
+    history = {"train_loss": [], "val_loss": [], "r2_scores": [], "mae_scores": [], "lr": []}
 
     for epoch in range(config["epochs"]):
-        # --- Train ---
         model.train()
         train_loss_accum = 0.0
-
         for x, target_bins, weights, _ in train_loader:
-            x = x.to(device)
-            target_bins = target_bins.to(device)
-            weights = torch.tensor(weights, dtype=torch.float32).to(device)
+            x, target_bins = x.to(device), target_bins.to(device)
+            weights = weights.to(device, dtype=torch.float32)
 
             optimizer.zero_grad()
             logits = model(x)
             loss = ordinal_loss(logits, target_bins, weights)
             loss.backward()
 
-            # Gradient clipping — защита от взрывных градиентов
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             train_loss_accum += loss.item()
 
-        # --- Validation ---
+        # Валидация
         model.eval()
         all_preds, all_targets = [], []
         val_loss_accum = 0.0
-
         with torch.no_grad():
             for x, target_bins, weights, orig_targets in val_loader:
-                x = x.to(device)
-                target_bins = target_bins.to(device)
-                weights = torch.tensor(weights, dtype=torch.float32).to(device)
+                x, target_bins = x.to(device), target_bins.to(device)
+                weights = weights.to(device, dtype=torch.float32)
 
                 logits = model(x)
-                loss = ordinal_loss(logits, target_bins, weights)
-                val_loss_accum += loss.item()
-
-                preds = bins_to_score(logits)  # (B, 5)
-                all_preds.append(preds.cpu().numpy())
+                val_loss_accum += ordinal_loss(logits, target_bins, weights).item()
+                all_preds.append(bins_to_score(logits).cpu().numpy())
                 all_targets.append(orig_targets.numpy())
 
-        preds_np = np.vstack(all_preds)    # (N, 5)
-        targets_np = np.vstack(all_targets)  # (N, 5)
-
-        # R² считается по всей матрице: sklearn усредняет по трейтам
+        preds_np, targets_np = np.vstack(all_preds), np.vstack(all_targets)
         r2 = r2_score(targets_np, preds_np, multioutput='uniform_average')
         mae = mean_absolute_error(targets_np, preds_np)
 
-        avg_train_loss = train_loss_accum / len(train_loader)
-        avg_val_loss = val_loss_accum / len(val_loader)
-        current_lr = optimizer.param_groups[0]["lr"]
+        avg_train, avg_val = train_loss_accum / len(train_loader), val_loss_accum / len(val_loader)
 
-        history["train_loss"].append(avg_train_loss)
-        history["val_loss"].append(avg_val_loss)
+        history["train_loss"].append(avg_train)
+        history["val_loss"].append(avg_val)
         history["r2_scores"].append(r2)
         history["mae_scores"].append(mae)
-        history["lr"].append(current_lr)
+        history["lr"].append(optimizer.param_groups[0]["lr"])
 
-        # Планировщик следит за R²
         scheduler.step(r2)
+        if epoch % 5 == 0:
+            print(f"E{epoch:03d} | L:{avg_val:.4f} | R2:{r2:.4f} | MAE:{mae:.4f}")
 
-        if epoch % 5 == 0 or epoch < 5:
-            print(
-                f"Epoch {epoch:03d} | "
-                f"TrainLoss: {avg_train_loss:.4f} | "
-                f"ValLoss: {avg_val_loss:.4f} | "
-                f"R²: {r2:.4f} | "
-                f"MAE: {mae:.4f} | "
-                f"LR: {current_lr:.2e}"
-            )
-
-        if early_stopping.step(r2, model):
-            print(f"\nEarly stopping на эпохе {epoch}. Лучший R²: {early_stopping.best_r2:.4f}")
-            break
+        if early_stopping.step(r2, model): break
 
     early_stopping.restore_best(model)
     return model, history
@@ -353,7 +297,7 @@ def main():
         train_ds,
         batch_size=config["batch_size"],
         shuffle=True,
-        drop_last=True,   # отбрасываем неполный батч — стабилизирует BatchNorm/LN
+        drop_last=False,
     )
     val_loader = DataLoader(
         val_ds,

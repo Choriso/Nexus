@@ -78,22 +78,10 @@ class ResidualBlock(nn.Module):
         return self.act(x + self.block(x))
 
 
+# [ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ ДО КЛАССА PersonalityClassifier]
+
 class PersonalityClassifier(nn.Module):
-    """
-    Архитектура для предсказания OCEAN-профиля как ординальной классификации.
-
-    input_size=388:
-        384 (SBERT embedding) + 4 (ручные признаки)
-
-    Схема:
-        Input → Projection(388→256) → LN → GELU → Dropout
-              → ResidualBlock(256)
-              → Linear(256→128) → LN → GELU → Dropout
-              → Head: Linear(128 → 5 * num_bins)
-              → view(-1, 5, num_bins)
-    """
-
-    def __init__(self, input_size=388, dropout=0.15, num_bins=NUM_BINS):
+    def __init__(self, input_size=388, dropout=0.2, num_bins=NUM_BINS):  # Увеличен dropout
         super().__init__()
         self.num_bins = num_bins
 
@@ -113,12 +101,17 @@ class PersonalityClassifier(nn.Module):
             nn.Dropout(dropout),
         )
 
-        # head: 5 трейтов × num_bins бинов
         self.classifier = nn.Linear(128, 5 * num_bins)
 
-        # Xavier-инициализация head'а — важно для стабильного старта
-        nn.init.xavier_uniform_(self.classifier.weight, gain=0.5)
-        nn.init.zeros_(self.classifier.bias)
+        # Улучшенная инициализация
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        # Head инициализируем отдельно для мягкого старта
+        nn.init.xavier_uniform_(self.classifier.weight, gain=0.1)
 
     def forward(self, x):
         x = self.projection(x)
