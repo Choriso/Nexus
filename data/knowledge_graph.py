@@ -3,9 +3,7 @@ from .session import SqlAlchemyBase
 from sqlalchemy import orm
 
 
-class KnowledgeNode(SqlAlchemyBase):
-    """Узлы графа знаний пользователя"""
-    
+class KnowledgeNode(SqlAlchemyBase):    
     __tablename__ = 'knowledge_nodes'
 
     id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True, autoincrement=True)
@@ -26,9 +24,7 @@ class KnowledgeNode(SqlAlchemyBase):
     )
 
 
-class KnowledgeConnection(SqlAlchemyBase):
-    """Связи между узлами графа"""
-    
+class KnowledgeConnection(SqlAlchemyBase):    
     __tablename__ = 'knowledge_connections'
 
     id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True, autoincrement=True)

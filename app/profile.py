@@ -18,8 +18,12 @@ profile_bp = Blueprint("profile", __name__)
 
 @profile_bp.route("/viewProfile", methods=["GET"])
 def view_profile():
-    user_id = request.args.get("user_id")
+    """Возвращает страницу профиля пользователя.
 
+    Returns:
+        flask.Response: HTML-страница с профилем пользователя.
+    """
+    user_id: int = request.args.get("user_id")
     with get_db_session() as db_sess:
         interest = db_sess.query(Interest).filter(Interest.user_id == user_id)
         user = db_sess.query(User).get(user_id)
@@ -31,30 +35,48 @@ def view_profile():
 @profile_bp.route("/profile", methods=["GET", "POST"])
 @login_required
 def profile():
+    """Страница профиля текущего пользователя.
+
+    Returns:
+        flask.Response: HTML-страница профиля пользователя.
+    """
     with get_db_session() as db_sess:
         user = db_sess.query(User).get(current_user.id)
         if not user:
             abort(404)
-        # Созданные интересы
-        created_interests = db_sess.query(Interest).filter(Interest.user == current_user).all()
-        # Избранные интересы
         from data.favorite_interest import FavoriteInterest
         from sqlalchemy.orm import joinedload
-        favorite_ids = [fav.interest_id for fav in db_sess.query(FavoriteInterest).filter(
-            FavoriteInterest.user_id == current_user.id
-        ).all()]
-        favorite_interests = db_sess.query(Interest).options(joinedload(Interest.user)).filter(
-            Interest.id.in_(favorite_ids)
-        ).all() if favorite_ids else []
-        return render_template("profile.html", title="Профиль",
-                               interest=created_interests,
-                               favorite_interests=favorite_interests,
-                               current_user=current_user)
+
+        created_interests = db_sess.query(Interest).filter(Interest.user == current_user).all()
+
+        favorite_ids = [
+            fav.interest_id for fav in db_sess.query(FavoriteInterest)
+            .filter(FavoriteInterest.user_id == current_user.id)
+            .all()
+        ]
+        favorite_interests = (
+            db_sess.query(Interest)
+            .options(joinedload(Interest.user))
+            .filter(Interest.id.in_(favorite_ids)).all()
+            if favorite_ids else []
+        )
+        return render_template(
+            "profile.html",
+            title="Профиль",
+            interest=created_interests,
+            favorite_interests=favorite_interests,
+            current_user=current_user
+        )
 
 
 @profile_bp.route("/upload_avatar", methods=["POST"])
 @login_required
 def upload_avatar():
+    """Загрузка и обработка аватара пользователя.
+
+    Returns:
+        flask.Response: JSON с результатом выполнения.
+    """
     if "photo" not in request.files:
         return jsonify({"success": False, "message": "Файл не найден"}), 400
 
@@ -62,29 +84,23 @@ def upload_avatar():
     if photo.filename == "":
         return jsonify({"success": False, "message": "Файл не выбран"}), 400
 
-    # Проверка расширения
     filename = secure_filename(photo.filename)
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in {"png", "jpg", "jpeg", "webp"}:
         return jsonify({"success": False, "message": "Недопустимый формат"}), 400
 
-    # ИЗМЕНЕНИЕ: Указываем путь именно в avatars
-    # Обычно в config['UPLOAD_FOLDER'] лежит 'static/uploads'
     base_upload_folder = current_app.config["UPLOAD_FOLDER"]
     avatar_folder = os.path.join(base_upload_folder, "avatars")
     os.makedirs(avatar_folder, exist_ok=True)
 
-    # Всегда сохраняем в .webp для экономии места
     unique_filename = f"{uuid.uuid4().hex}.webp"
     photo_path = os.path.join(avatar_folder, unique_filename)
 
     try:
-        # ОБРАБОТКА (как обсуждали: квадрат + сжатие)
         with Image.open(photo) as img:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
 
-            # Делаем квадрат
             width, height = img.size
             min_side = min(width, height)
             left = (width - min_side) / 2
@@ -93,44 +109,43 @@ def upload_avatar():
             bottom = (height + min_side) / 2
             img = img.crop((left, top, right, bottom))
 
-            # Ресайз до 400px (оптимально для профиля)
             img.thumbnail((400, 400), Image.Resampling.LANCZOS)
             img.save(photo_path, 'WEBP', quality=85, optimize=True)
 
     except Exception as e:
         return jsonify({"success": False, "message": f"Ошибка обработки: {str(e)}"}), 500
 
-    # ИЗМЕНЕНИЕ: Относительный путь теперь включает avatars
     relative_path = f"uploads/avatars/{unique_filename}"
 
     with get_db_session() as db_sess:
         user = db_sess.get(User, current_user.id)
 
-        # Удаление старой аватарки (с защитой от удаления дефолтной)
         if user.image_path and 'default' not in user.image_path:
-            # Важно: удаляем через полный путь от корня проекта
             old_full_path = os.path.join('static', user.image_path)
             if os.path.exists(old_full_path):
                 try:
                     os.remove(old_full_path)
-                except:
+                except Exception:
                     pass
 
         user.image_path = relative_path
         db_sess.commit()
 
-    # Возвращаем путь, который поймет <img> src
     return jsonify({"success": True, "image_path": f"/static/{relative_path}"})
 
 
 @profile_bp.route("/process_profile", methods=["POST"])
 @login_required
 def process_profile():
+    """Обновление данных профиля пользователя из формы.
+
+    Returns:
+        flask.Response: Перенаправление на страницу профиля.
+    """
     with get_db_session() as db_sess:
         user = db_sess.get(User, current_user.id)
         if not user:
             abort(404)
-        # ожидаем, что фронт отправляет данные формой — используем form в качестве базового варианта
         user.name = request.form.get("name", user.name)
         user.information = request.form.get("information", user.information)
         user.connection = request.form.get("connection", user.connection)
@@ -141,12 +156,22 @@ def process_profile():
 @profile_bp.route("/settings", methods=["GET"])
 @login_required
 def settings():
+    """Страница настроек пользователя.
+
+    Returns:
+        flask.Response: HTML-страница настроек.
+    """
     return render_template("settings.html", current_user=current_user)
 
 
 @profile_bp.route("/update_profile", methods=["POST"])
 @login_required
 def update_profile():
+    """Обработка и сохранение изменений профиля через JSON-запрос.
+
+    Returns:
+        flask.Response: JSON-ответ о результатах сохранения.
+    """
     data = request.json
     with get_db_session() as db_sess:
         user = db_sess.get(User, current_user.id)
@@ -160,8 +185,6 @@ def update_profile():
             user.information = data["information"]
 
         if "password" in data and data["password"]:
-            # Здесь можно добавить проверку кода подтверждения через email
-            # Пока просто обновляем пароль
             user.set_password(data["password"])
 
         db_sess.commit()
@@ -172,7 +195,11 @@ def update_profile():
 @profile_bp.route("/knowledge_graph", methods=["GET"])
 @login_required
 def knowledge_graph():
-    """Страница графа знаний"""
+    """Страница отображения графа знаний пользователя.
+
+    Returns:
+        flask.Response: HTML-страница с графом знаний.
+    """
     from sqlalchemy.orm import joinedload
 
     with get_db_session() as db_sess:
@@ -217,7 +244,11 @@ def knowledge_graph():
 @profile_bp.route("/knowledge_graph/node", methods=["POST"])
 @login_required
 def create_node():
-    """Создание нового узла графа"""
+    """Создание нового узла графа знаний.
+
+    Returns:
+        flask.Response: JSON-ответ с информацией о созданном узле.
+    """
     from data.knowledge_graph import KnowledgeNode
 
     data = request.json
@@ -246,7 +277,14 @@ def create_node():
 @profile_bp.route("/knowledge_graph/node/<int:node_id>", methods=["PUT", "DELETE"])
 @login_required
 def update_node(node_id):
-    """Обновление или удаление узла"""
+    """Обновление или удаление узла графа знаний.
+
+    Args:
+        node_id (int): ID узла графа.
+
+    Returns:
+        flask.Response: JSON-ответ об успешном завершении действия.
+    """
     from data.knowledge_graph import KnowledgeNode, KnowledgeConnection
 
     with get_db_session() as db_sess:
@@ -259,7 +297,6 @@ def update_node(node_id):
             return jsonify({"success": False, "message": "Узел не найден"}), 404
 
         if request.method == "DELETE":
-            # Удаляем все связи
             db_sess.query(KnowledgeConnection).filter(
                 (KnowledgeConnection.from_node_id == node_id) |
                 (KnowledgeConnection.to_node_id == node_id)
@@ -268,7 +305,6 @@ def update_node(node_id):
             db_sess.commit()
             return jsonify({"success": True})
         else:
-            # PUT - обновление
             data = request.json
             if "title" in data:
                 node.title = data["title"]
@@ -295,7 +331,11 @@ def update_node(node_id):
 @profile_bp.route("/knowledge_graph/connection", methods=["POST", "DELETE"])
 @login_required
 def manage_connection():
-    """Создание или удаление связи"""
+    """Создание или удаление связи между узлами графа знаний.
+
+    Returns:
+        flask.Response: JSON-ответ с результатом.
+    """
     from data.knowledge_graph import KnowledgeNode, KnowledgeConnection
 
     with get_db_session() as db_sess:
@@ -304,7 +344,6 @@ def manage_connection():
             from_id = data.get("from_node_id")
             to_id = data.get("to_node_id")
 
-            # Проверяем, что узлы принадлежат пользователю
             from_node = db_sess.query(KnowledgeNode).filter(
                 KnowledgeNode.id == from_id,
                 KnowledgeNode.user_id == current_user.id
@@ -317,7 +356,6 @@ def manage_connection():
             if not from_node or not to_node:
                 return jsonify({"success": False, "message": "Узлы не найдены"}), 404
 
-            # Проверяем, нет ли уже такой связи
             existing = db_sess.query(KnowledgeConnection).filter(
                 KnowledgeConnection.from_node_id == from_id,
                 KnowledgeConnection.to_node_id == to_id
@@ -341,7 +379,6 @@ def manage_connection():
                 "label": connection.label
             }})
         else:
-            # DELETE
             connection_id = request.json.get("connection_id")
             connection = db_sess.query(KnowledgeConnection).join(
                 KnowledgeNode, KnowledgeConnection.from_node_id == KnowledgeNode.id
@@ -361,6 +398,11 @@ def manage_connection():
 @profile_bp.route("/knowledge_graph_data")
 @login_required
 def get_graph_data():
+    """Возвращает JSON-структуру графа знаний пользователя.
+
+    Returns:
+        flask.Response: JSON с массивом узлов и связей графа.
+    """
     with get_db_session() as db_sess:
         nodes_db = db_sess.query(KnowledgeNode).filter(
             KnowledgeNode.user_id == current_user.id
@@ -394,18 +436,17 @@ def get_graph_data():
     return jsonify({"nodes": nodes, "connections": connections})
 
 
-# Настраиваем веса под категории
 CATEGORY_CONFIG = {
     'work': {
-        'weights': [0.3, 1.0, 0.5, 0.2, 0.8],  # Акцент на C (дисциплина) и N (стабильность)
-        'complementary': [2]  # Индекс Экстраверсии (E) — ищем дополнение
+        'weights': [0.3, 1.0, 0.5, 0.2, 0.8],
+        'complementary': [2]
     },
     'hobby': {
-        'weights': [1.0, 0.2, 0.8, 0.5, 0.1],  # Акцент на O (открытость) и E (драйв)
+        'weights': [1.0, 0.2, 0.8, 0.5, 0.1],
         'complementary': []
     },
     'psychology': {
-        'weights': [0.7, 0.4, 0.4, 1.0, 0.6],  # Акцент на A (дружелюбие)
+        'weights': [0.7, 0.4, 0.4, 1.0, 0.6],
         'complementary': []
     }
 }
@@ -414,10 +455,18 @@ CATEGORY_CONFIG = {
 @profile_bp.route("/api/graph/match/<int:node_id>")
 @login_required
 def match_by_node(node_id):
-    # Получаем категорию из запроса (по умолчанию 'psychology')
-    raw_cat = request.args.get('category', 'psychology').lower().strip()
+    """Поиск наиболее подходящих пользователей/узлов по выбранному узлу графа знаний.
 
-    # Маппинг для поддержки русского и английского
+    Args:
+        node_id (int): ID целевого узла.
+
+    Query Args:
+        category (str, optional): Категория для поиска совпадений.
+
+    Returns:
+        flask.Response: JSON-список наиболее подходящих совпадений с причинами.
+    """
+    raw_cat = request.args.get('category', 'psychology').lower().strip()
     cat_mapping = {
         'работа': 'work',
         'work': 'work',
@@ -426,14 +475,7 @@ def match_by_node(node_id):
         'психология': 'psychology',
         'psychology': 'psychology'
     }
-
     cat_type = cat_mapping.get(raw_cat, 'psychology')
-
-    # ДЕБАГ: Проверяем в консоли Flask, что пришло
-    print(f"--- MATCHING LOG ---")
-    print(f"Raw category from request: '{raw_cat}'")
-    print(f"Mapped category: '{cat_type}'")
-    print(f"Weights used: {CATEGORY_CONFIG[cat_type]['weights']}")
     config = CATEGORY_CONFIG.get(cat_type, CATEGORY_CONFIG['psychology'])
 
     with get_db_session() as db_sess:
@@ -443,12 +485,9 @@ def match_by_node(node_id):
 
         my_profile = db_sess.query(UserPersonalityProfile).filter_by(user_id=current_user.id).first()
 
-        from app.ai_profiler.core import AIProfiler
         profiler = AIProfiler()
 
         candidates = db_sess.query(KnowledgeNode).filter(
-            # Либо ищем по категории узла (например, все узлы из 'Работа')
-            # Либо берем вообще всех, если база небольшая (до 1000-5000 записей это быстро)
             KnowledgeNode.user_id != current_user.id
         ).all()
         matches = []
@@ -458,30 +497,30 @@ def match_by_node(node_id):
 
             interest_sim = profiler.calculate_text_similarity(target_node.title, node.title)
 
-            # Инициализируем векторы нулями на случай, если профиля нет
             my_vec = [0, 0, 0, 0, 0]
             other_vec = [0, 0, 0, 0, 0]
             psy_score = 0.5
 
             if my_profile and other_profile:
-                my_vec = [my_profile.openness, my_profile.conscientiousness, my_profile.extraversion,
-                          my_profile.agreeableness, my_profile.neuroticism]
-                other_vec = [other_profile.openness, other_profile.conscientiousness, other_profile.extraversion,
-                             other_profile.agreeableness, other_profile.neuroticism]
+                my_vec = [
+                    my_profile.openness, my_profile.conscientiousness, my_profile.extraversion,
+                    my_profile.agreeableness, my_profile.neuroticism
+                ]
+                other_vec = [
+                    other_profile.openness, other_profile.conscientiousness, other_profile.extraversion,
+                    other_profile.agreeableness, other_profile.neuroticism
+                ]
 
                 processed_other_vec = other_vec[:]
                 for idx in config['complementary']:
                     processed_other_vec[idx] = 1.0 - other_vec[idx]
 
                 psy_score = profiler.calculate_compatibility(
-                    my_vec,
-                    processed_other_vec,
-                    weights=config['weights']
+                    my_vec, processed_other_vec, weights=config['weights']
                 ) / 100
 
             total_score = (interest_sim * 0.7) + (psy_score * 0.3)
 
-            # Теперь my_vec точно существует, даже если профили пустые
             reason = "Похожие интересы"
             if cat_type == 'work' and my_vec[2] != 0 and other_vec[2] != 0:
                 if abs(my_vec[2] - other_vec[2]) > 0.4:

@@ -16,23 +16,25 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 ARTIFACTS_DIR = ROOT_DIR / "ml" / "artifacts"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-
-# ---------------------------------------------------------------
-# Dataset
-# ---------------------------------------------------------------
-
 class PersonalityDataset(Dataset):
     """
-    Поддерживает два формата:
-      1. .pt — предобработанные тензоры с полями: features, target, weight
-      2. .json — сырые данные с полями: features, target, weight
-         ИЛИ (новый формат): text, scores — в этом случае embeddings
-         должны быть заранее вычислены внешним скриптом и переданы через
-         поле "features".
+    Класс датасета для задачи OCEAN-предсказания.
 
-    ВАЖНО: JSON-файл должен содержать уже вычисленные эмбеддинги в поле
-    "features" (список float длиной 388). Поле "scores" — целевые OCEAN [0,1].
-    Если хочешь подавать сырой текст — используй скрипт preprocess.py.
+    Поддерживаются два формата данных:
+    1. .pt — тензоры torch с полями: features, target, weight.
+    2. .json — список словарей с полями: features, target, weight,
+       либо (новый формат) text и scores (в этом случае embeddings
+       должны быть доступны в поле 'features').
+
+    Args:
+        data_path (str): Путь к файлу данных (.pt или .json).
+
+    Raises:
+        ValueError: При отсутствии необходимых полей в json.
+
+    Attributes:
+        data (list[dict] или list): Сырые или преобразованные данные.
+        format (str): Формат данных ('features', 'pt').
     """
 
     def __init__(self, data_path: str):
@@ -40,94 +42,117 @@ class PersonalityDataset(Dataset):
             with open(data_path, 'r', encoding='utf-8') as f:
                 raw_data = json.load(f)
             self.data = raw_data
-            # Определяем формат: новый (text+scores) или старый (features+target)
             sample = self.data[0]
             if "features" in sample:
                 self.format = "features"
             elif "text" in sample and "scores" in sample:
-                # Нет features — нужна предобработка
                 raise ValueError(
-                    "JSON содержит 'text'+'scores' без 'features'. "
-                    "Запусти preprocess.py сначала, чтобы вычислить эмбеддинги."
+                    "JSON содержит 'text' и 'scores', но отсутствует 'features'. "
+                    "Выполните скрипт preprocess.py для вычисления эмбеддингов."
                 )
             else:
-                raise ValueError(f"Неизвестный формат JSON. Ключи: {list(sample.keys())}")
+                raise ValueError(f"Неизвестный формат JSON. Найдены ключи: {list(sample.keys())}")
             print(f"Загружено {len(self.data)} примеров из JSON (формат: {self.format}).")
         else:
             self.data = torch.load(data_path)
             self.format = "pt"
             print(f"Загружено {len(self.data)} тензорных примеров.")
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Возвращает количество примеров в датасете.
+
+        Returns:
+            int: Размер датасета.
+        """
         return len(self.data)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
+        """Достает пример из датасета по индексу.
+
+        Args:
+            idx (int): Индекс примера.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, float, torch.Tensor]:
+                features: Тензор признаков (shape: [388]).
+                target_bins: Целевые бины (long tensor).
+                weight: Вес примера (float).
+                target_raw: Оригинальные значения (float tensor).
+        """
         item = self.data[idx]
-
         features = torch.tensor(item["features"], dtype=torch.float32)
-
-        # Поддержка обоих ключей: "target" или "scores"
         raw_scores = item.get("target", item.get("scores"))
         target_raw = np.array(raw_scores, dtype=np.float32)
-
         target_bins = torch.tensor(scores_to_bins(target_raw), dtype=torch.long)
         weight = float(item.get("weight", 1.0))
-
         return features, target_bins, weight, torch.tensor(target_raw)
 
-
-# ---------------------------------------------------------------
-# Лосс-функция
-# ---------------------------------------------------------------
-
-def ordinal_loss(logits, target_bins, sample_weights):
+def ordinal_loss(
+    logits: torch.Tensor,
+    target_bins: torch.Tensor,
+    sample_weights: torch.Tensor
+) -> torch.Tensor:
     """
-    ИСПРАВЛЕННЫЙ Ординальный лосс.
-    Теперь и таргеты, и предсказания работают в одной логике: P(Y <= k)
+    Ординальный (ordinal) лосс для задачи градуированного предсказания.
+
+    Одинаково интерпретирует модельные предсказания и таргеты: P(Y <= k),
+    где k — границы бинов по каждому признаку.
+
+    Args:
+        logits (torch.Tensor): Модельные логицы, shape (B, T, K).
+        target_bins (torch.Tensor): Бины-таргеты, shape (B, T).
+        sample_weights (torch.Tensor): Веса примеров, shape (B,).
+
+    Returns:
+        torch.Tensor: Значение лосса (скаляр).
     """
     B, T, K = logits.shape
     device = logits.device
-
-    # range_tensor: [0, 1, 2, ..., K-2]
     range_tensor = torch.arange(K - 1, device=device).view(1, 1, -1)
-
-    # ПРАВИЛЬНО: Цель = 1, если истинный бин попал в порог <= k
     cum_targets = (target_bins.unsqueeze(-1) <= range_tensor).float()
-
-    # Снижаем smoothing до 0.02 — на 1.7к данных 0.05 слишком сильно размывает результат
     smoothing = 0.02
     cum_targets = cum_targets * (1 - smoothing) + (1 - cum_targets) * smoothing
-
-    # Предсказание модели: вероятность P(Y <= k) через сумму софтмакса
     probs = F.softmax(logits, dim=-1)
     cum_probs = torch.cumsum(probs, dim=-1)[:, :, :-1].clamp(1e-6, 1.0 - 1e-6)
-
-    # Теперь BCE сравнивает однотипные вероятности
     bce = F.binary_cross_entropy(cum_probs, cum_targets, reduction='none')
-
     sample_weights = sample_weights.to(device)
     loss = (bce.mean(dim=(1, 2)) * sample_weights).mean()
-
     return loss
-
-
-# ---------------------------------------------------------------
-# Early Stopping
-# ---------------------------------------------------------------
 
 class EarlyStopping:
     """
-    Останавливает обучение при отсутствии улучшений R² за patience эпох.
-    Сохраняет лучшие веса модели.
+    Реализация ранней остановки по метрике R². Сохраняет наилучшую модель.
+
+    Args:
+        patience (int): Количество эпох ожидания без улучшения.
+        min_delta (float): Минимальное приращение для улучшения лучшего результата.
+
+    Attributes:
+        patience (int): Порог терпимости.
+        min_delta (float): Шаг улучшения.
+        best_r2 (float): Лучшее достигнутое значение R².
+        counter (int): Счетчик эпох без улучшения.
+        best_state (dict или None): Снэпшот state_dict модели.
     """
-    def __init__(self, patience=30, min_delta=5e-4):
+
+    def __init__(self, patience: int = 30, min_delta: float = 5e-4):
         self.patience = patience
         self.min_delta = min_delta
         self.best_r2 = -float("inf")
         self.counter = 0
         self.best_state = None
 
-    def step(self, current_r2, model):
+    def step(self, current_r2: float, model: nn.Module) -> bool:
+        """
+        Проверяет и обновляет состояние ранней остановки.
+
+        Args:
+            current_r2 (float): Текущее значение метрики R².
+            model (nn.Module): Обучаемая модель.
+
+        Returns:
+            bool: True если пора прервать обучение, иначе False.
+        """
         if current_r2 > self.best_r2 + self.min_delta:
             self.best_r2 = current_r2
             self.counter = 0
@@ -137,51 +162,54 @@ class EarlyStopping:
             self.counter += 1
             return self.counter >= self.patience
 
-    def restore_best(self, model):
+    def restore_best(self, model: nn.Module) -> None:
+        """
+        Восстанавливает веса лучшей модели по метрике.
+
+        Args:
+            model (nn.Module): Модель.
+        """
         if self.best_state:
             model.load_state_dict(self.best_state)
             print(f"Восстановлена лучшая модель с R²={self.best_r2:.4f}")
 
+def train_model(train_loader: DataLoader, val_loader: DataLoader, config: dict):
+    """
+    Главный цикл обучения. Осуществляет тренировку, валидацию, расчет метрик и лоссов.
 
-# ---------------------------------------------------------------
-# Цикл обучения
-# ---------------------------------------------------------------
+    Args:
+        train_loader (DataLoader): Даталоадер для обучающих данных.
+        val_loader (DataLoader): Даталоадер для валидационных данных.
+        config (dict): Конфиг гиперпараметров.
 
-def train_model(train_loader, val_loader, config):
+    Returns:
+        Tuple[nn.Module, dict]: Обученная модель и история обучения.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = PersonalityClassifier(input_size=388, num_bins=NUM_BINS).to(device)
-
-    # Используем чуть более консервативный LR для начала
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config["lr"],
         weight_decay=config["weight_decay"],
     )
-
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.5, patience=12
     )
-
     early_stopping = EarlyStopping(patience=config["es_patience"])
     history = {"train_loss": [], "val_loss": [], "r2_scores": [], "mae_scores": [], "lr": []}
-
     for epoch in range(config["epochs"]):
         model.train()
         train_loss_accum = 0.0
         for x, target_bins, weights, _ in train_loader:
             x, target_bins = x.to(device), target_bins.to(device)
             weights = weights.to(device, dtype=torch.float32)
-
             optimizer.zero_grad()
             logits = model(x)
             loss = ordinal_loss(logits, target_bins, weights)
             loss.backward()
-
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             train_loss_accum += loss.item()
-
-        # Валидация
         model.eval()
         all_preds, all_targets = [], []
         val_loss_accum = 0.0
@@ -189,72 +217,66 @@ def train_model(train_loader, val_loader, config):
             for x, target_bins, weights, orig_targets in val_loader:
                 x, target_bins = x.to(device), target_bins.to(device)
                 weights = weights.to(device, dtype=torch.float32)
-
                 logits = model(x)
                 val_loss_accum += ordinal_loss(logits, target_bins, weights).item()
                 all_preds.append(bins_to_score(logits).cpu().numpy())
                 all_targets.append(orig_targets.numpy())
-
         preds_np, targets_np = np.vstack(all_preds), np.vstack(all_targets)
         r2 = r2_score(targets_np, preds_np, multioutput='uniform_average')
         mae = mean_absolute_error(targets_np, preds_np)
-
         avg_train, avg_val = train_loss_accum / len(train_loader), val_loss_accum / len(val_loader)
-
         history["train_loss"].append(avg_train)
         history["val_loss"].append(avg_val)
         history["r2_scores"].append(r2)
         history["mae_scores"].append(mae)
         history["lr"].append(optimizer.param_groups[0]["lr"])
-
         scheduler.step(r2)
         if epoch % 5 == 0:
             print(f"E{epoch:03d} | L:{avg_val:.4f} | R2:{r2:.4f} | MAE:{mae:.4f}")
-
-        if early_stopping.step(r2, model): break
-
+        if early_stopping.step(r2, model):
+            break
     early_stopping.restore_best(model)
     return model, history
 
+def plot_history(history: dict, save_dir: Path) -> None:
+    """
+    Визуализирует историю лоссов и метрик обучения.
 
-# ---------------------------------------------------------------
-# Построение графиков
-# ---------------------------------------------------------------
+    Args:
+        history (dict): История обучения с ключами "train_loss", "val_loss", "r2_scores", "mae_scores", "lr".
+        save_dir (Path): Путь к директории для сохранения графика.
 
-def plot_history(history, save_dir: Path):
+    Returns:
+        None
+    """
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-
     axes[0].plot(history["train_loss"], label="Train Loss")
     axes[0].plot(history["val_loss"], label="Val Loss")
     axes[0].set_title("Loss")
     axes[0].legend()
     axes[0].grid(True)
-
     axes[1].plot(history["r2_scores"], color="green", label="R²")
     axes[1].axhline(0, color="red", linestyle="--", alpha=0.5)
     axes[1].set_title("R² Score")
     axes[1].legend()
     axes[1].grid(True)
-
     axes[2].plot(history["lr"], color="orange", label="LR")
     axes[2].set_title("Learning Rate")
     axes[2].legend()
     axes[2].grid(True)
-
     plt.tight_layout()
     save_path = save_dir / "training_history.png"
     plt.savefig(save_path, dpi=120, bbox_inches="tight")
     plt.close()
     print(f"График сохранён: {save_path}")
 
+def main() -> None:
+    """
+    Главная точка входа. Готовит данные, запускает обучение, сохраняет модель и строит график.
 
-# ---------------------------------------------------------------
-# main
-# ---------------------------------------------------------------
-
-def main():
-    # --- Выбор данных ---
-    # Приоритет: предобработанные тензоры (.pt) → JSON с features
+    Returns:
+        None
+    """
     pt_path = Path("data/train_data_precomputed.pt")
     json_path = Path("data/generated_data_ocean.json")
 
@@ -272,7 +294,6 @@ def main():
     n = len(ds)
     print(f"Всего примеров: {n}")
 
-    # Разбивка 85/15 с фиксированным seed для воспроизводимости
     train_size = int(0.85 * n)
     val_size = n - train_size
     generator = torch.Generator().manual_seed(42)
@@ -281,15 +302,10 @@ def main():
     )
 
     config = {
-        # LR снижен: на 1.7k примерах 1e-3 слишком агрессивен
         "lr": 3e-4,
-        # weight_decay снижен: меньше L2-регуляризации, больше свободы
         "weight_decay": 1e-5,
         "epochs": 200,
-        # Батч 32 — компромисс между стабильностью градиента и частотой обновлений
         "batch_size": 32,
-        # patience увеличен: ReduceLROnPlateau уже адаптирует LR,
-        # ES нужен только для окончательной остановки
         "es_patience": 40,
     }
 
@@ -309,21 +325,16 @@ def main():
     print(f"Train: {len(train_ds)} | Val: {len(val_ds)}\n")
 
     model, history = train_model(train_loader, val_loader, config)
-
-    # Сохранение модели
     save_path = ARTIFACTS_DIR / "personality_model_best.pth"
     torch.save(model.state_dict(), save_path)
     print(f"\nМодель сохранена: {save_path}")
 
-    # Финальные метрики
     best_r2 = max(history["r2_scores"])
     best_epoch = history["r2_scores"].index(best_r2)
     best_mae = history["mae_scores"][best_epoch]
     print(f"Лучший R²: {best_r2:.4f} (epoch {best_epoch}), MAE: {best_mae:.4f}")
 
-    # График
     plot_history(history, ARTIFACTS_DIR)
-
 
 if __name__ == "__main__":
     main()

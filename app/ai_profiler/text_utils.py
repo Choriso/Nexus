@@ -1,8 +1,8 @@
 """
-Sanitização de texto de utilizador para embeddings e features manuais.
+Утилиты для очистки пользовательского текста перед созданием embedding-векторов и ручными feature-вычислениями.
 
-Mantém a lógica partilhada entre ``AIProfiler``, ``preprocess.py`` e testes,
-sem dependências de PyTorch.
+Обеспечивается единая логика предобработки для AIProfiler, preprocess.py и модульных тестов.
+Не зависит от PyTorch.
 """
 
 from __future__ import annotations
@@ -10,28 +10,29 @@ from __future__ import annotations
 import re
 from typing import Final
 
-# Limite para mitigar ReDoS / custo de regex e memória em inputs maliciosos.
 MAX_PROFILE_TEXT_CHARS: Final[int] = 200_000
 
-
 def clean_user_text(text: str | None) -> str:
-    """Remove URLs, normaliza espaços e filtra caracteres não imprimíveis úteis.
+    """
+    Очищает пользовательский текст для дальнейшего анализа:
+    удаляет URL-адреса, нормализует пробелы и оставляет только полезные печатаемые символы.
 
     Args:
-        text: Texto bruto do utilizador ou None.
-
+        text (str | None): Исходный текст, введённый пользователем.
+    
     Returns:
-        String segura para análise; string vazia se não houver conteúdo útil.
-
-    Note:
-        Não substitui moderação de conteúdo; apenas reduz superfície de ataque
-        e ruído (URLs longas, caracteres de controlo).
+        str: Безопасная строка для анализа. Если содержимое отсутствует, возвращает пустую строку.
+    
+    Примечания:
+        - Не заменяет полноценную модерацию контента.
+        - Основная цель — снизить поверхность возможных атак (например, длинные URL, управляющие символы)
+          и убрать шум перед анализом.
+        - Применяется ограничение длины строки для предотвращения атаки вида ReDoS и чрезмерного расхода памяти.
     """
     if not text:
         return ""
     if not isinstance(text, str):
         text = str(text)
-    # Truncar antes de regex pesadas
     text = text[:MAX_PROFILE_TEXT_CHARS]
     text = text.replace("\x00", "")
     text = re.sub(r"http\S+|www\S+|https\S+", "", text, flags=re.MULTILINE)

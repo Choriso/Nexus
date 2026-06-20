@@ -3,12 +3,19 @@ import numpy as np
 from app.ai_profiler.core import AIProfiler
 from pathlib import Path
 
-# Путь к артефактам
 ARTIFACTS_DIR = Path("ml/artifacts")
 
 
-def test_inference():
-    # Инициализируем профайлер
+def test_inference() -> None:
+    """
+    Тестирует работу профайлера AIProfiler на различных текстах.
+
+    Выводит результаты профилирования: значения шкал OCEAN, предположительный MBTI-тип, 
+    стиль коммуникации и уровень уверенности для каждого тестового текста.
+
+    Returns:
+        None: Результаты выводятся в консоль.
+    """
     profiler = AIProfiler()
 
     test_texts = [
@@ -20,27 +27,24 @@ def test_inference():
         "ЭЙ ВЫ ВСЕ!!!!!! СМОТРИТЕ НА МЕНЯ!!!!!!!! Я САМЫЙ КРУТОЙ И ЭНЕРГИЧНЫЙ ЧЕЛОВЕК В ЭТОМ ЧАТЕ!!!!!!!!"
     ]
 
-    print("\n--- ТЕСТ ОБНОВЛЕННОГО NEXUS PROFILER ---")
+    print("\n--- ТЕСТ NEXUS PROFILER ---")
 
     for text in test_texts:
-        # ВАЖНО: Теперь вызываем analyze_profile вместо analyze_text
-        result = profiler.analyze_profile(text)
+        result: dict = profiler.analyze_profile(text)
 
         if not result:
             print(f"Ошибка анализа текста: {text[:30]}...")
             continue
 
-        # Извлекаем данные из словаря
-        ocean = result["ocean"]
-        mbti = result["mbti_type"]
-        style = result["communication"]
-        conf = result["confidence_score"]
+        ocean: list = result["ocean"]
+        mbti: str = result["mbti_type"]
+        style: str = result["communication"]
+        conf: float = result["confidence_score"]
 
         print(f"Текст: '{text}'")
-        # Индексы OCEAN: 0-O, 1-C, 2-E, 3-A, 4-N
-        print(f"📊 OCEAN: O={ocean[0]:.2f}, C={ocean[1]:.2f}, E={ocean[2]:.2f}, A={ocean[3]:.2f}, N={ocean[4]:.2f}")
-        print(f"🧠 MBTI: {mbti} (Уверенность: {conf:.2%})")
-        print(f"💬 Стиль: {style}")
+        print(f"OCEAN: O={ocean[0]:.2f}, C={ocean[1]:.2f}, E={ocean[2]:.2f}, A={ocean[3]:.2f}, N={ocean[4]:.2f}")
+        print(f"MBTI: {mbti} (Уверенность: {conf:.2%})")
+        print(f"Стиль: {style}")
         print("-" * 50)
 
 

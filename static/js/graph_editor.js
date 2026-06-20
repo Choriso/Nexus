@@ -1,17 +1,6 @@
-/**
- * Graph Editor for Knowledge Base — Refactored
- *
- * Исправления:
- * 1. Все ID нормализуются к строкам — нет конфликта int/string с D3.
- * 2. openEditModal, saveNode, deleteNode, closeModal — определены здесь,
- *    не в HTML. HTML-кнопки вызывают window.saveNode() и т.д.
- * 3. editingNodeId хранится как строка.
- * 4. Логика drag-end сохраняет позицию на сервер через API.
- */
-
 let simulation;
 let svg, g, link, node;
-let editingNodeId = null;  // всегда string или null
+let editingNodeId = null; // string или null
 
 const COLORS = {
     'core':       '#ff8906',
@@ -27,20 +16,36 @@ const CAT_LABELS = {
     'psychology': 'Психология'
 };
 
-// ─── Вспомогательные функции ──────────────────────────────────────────────────
-
+/**
+ * Получить цвет узла по его категории.
+ *
+ * @param {Object} d - Узел графа.
+ * @returns {string} Цвет hex.
+ */
 function nodeColor(d) {
     return COLORS[d.category] || COLORS['default'];
 }
 
+/**
+ * Получить радиус узла, зависящий от типа узла.
+ *
+ * @param {Object} d - Узел графа.
+ * @returns {number} Радиус узла в пикселях.
+ */
 function nodeRadius(d) {
     if (d.category === 'core') return 18;
     if (d.is_branch) return 13;
     return 9;
 }
 
-// ─── Инициализация графа ──────────────────────────────────────────────────────
-
+/**
+ * Инициализация и отрисовка графа в контейнере #graphCanvas.
+ *
+ * @param {Array<Object>} rawNodes - Список узлов, полученных от сервера.
+ * @param {Array<Object>} rawConnections - Список связей, полученных от сервера.
+ * @param {string} userName - Имя пользователя для отображения в центральном узле.
+ * @returns {void}
+ */
 window.initGraph = function(rawNodes, rawConnections, userName) {
     const canvas = document.getElementById('graphCanvas');
     if (!canvas) { console.error('graphCanvas not found'); return; }
@@ -48,19 +53,17 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
     const width  = canvas.clientWidth  || 900;
     const height = canvas.clientHeight || 650;
 
-    // 1. Ядро
     const coreNode = {
         id: 'user_core',
         title: userName || 'Я',
         category: 'core',
         x: width / 2, y: height / 2,
-        fx: width / 2, fy: height / 2   // зафиксирован в центре
+        fx: width / 2, fy: height / 2
     };
 
     const finalNodes = [coreNode];
     const finalLinks = [];
 
-    // 2. Ветки категорий
     Object.entries(CAT_LABELS).forEach(([cat, label]) => {
         finalNodes.push({ id: `branch_${cat}`, title: label, category: cat, is_branch: true });
         finalLinks.push({ source: 'user_core', target: `branch_${cat}` });
@@ -68,9 +71,7 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
 
     const nodeIdSet = new Set(finalNodes.map(n => String(n.id)));
 
-    // 3. Пользовательские узлы из БД
     rawNodes.forEach(n => {
-        // FIX: Приводим id к строке, пропускаем core
         const nodeId = String(n.id);
         if (nodeId === 'user_core' || n.category === 'core') return;
 
@@ -79,19 +80,16 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
 
         finalNodes.push({
             ...n,
-            id: nodeId,          // <-- всегда string
+            id: nodeId,
             category: cat,
-            // Если координаты 0 или null — пусть D3 расставит сам
             x: n.x || undefined,
             y: n.y || undefined,
         });
         nodeIdSet.add(nodeId);
 
-        // Связь: ветка → узел
         finalLinks.push({ source: `branch_${cat}`, target: nodeId });
     });
 
-    // 4. Пользовательские связи из БД
     (rawConnections || []).forEach(c => {
         const sourceId = String(c.from ?? c.from_node_id ?? c.source ?? '');
         const targetId = String(c.to ?? c.to_node_id ?? c.target ?? '');
@@ -106,16 +104,11 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
         });
     });
 
-    console.log('[Graph] nodes:', finalNodes.length, 'links:', finalLinks.length);
-
-    // ─── D3 ───────────────────────────────────────────────────────────────────
-
     svg = d3.select('#graphCanvas');
     svg.selectAll('*').remove();
 
     g = svg.append('g');
 
-    // Zoom & pan
     const zoom = d3.zoom()
         .scaleExtent([0.3, 3])
         .on('zoom', e => g.attr('transform', e.transform));
@@ -127,7 +120,6 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
         .force('center',    d3.forceCenter(width / 2, height / 2))
         .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 8));
 
-    // Линки
     link = g.append('g')
         .attr('class', 'links')
         .selectAll('line')
@@ -137,7 +129,6 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
         .attr('stroke-opacity', 0.45)
         .attr('stroke-width', 1.5);
 
-    // Узлы
     node = g.append('g')
         .attr('class', 'nodes')
         .selectAll('.node')
@@ -155,9 +146,7 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
                 })
                 .on('end', (e, d) => {
                     if (!e.active) simulation.alphaTarget(0);
-                    // Снимаем фиксацию только у не-core узлов
                     if (d.category !== 'core') {
-                        // Сохраняем позицию на сервер
                         _saveNodePosition(d.id, d.x, d.y);
                         d.fx = null; d.fy = null;
                     }
@@ -179,12 +168,8 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
         .style('user-select',    'none')
         .text(d => d.title);
 
-    // ─── События ─────────────────────────────────────────────────────────────
-
-    // ЛКМ — показать панель / вызвать внешний колбэк
     node.on('click', (event, d) => {
         if (d.category === 'core' || d.is_branch) return;
-        // Подсветка
         d3.selectAll('circle').attr('stroke', '#16161a').attr('stroke-width', 2);
         d3.select(event.currentTarget).select('circle')
             .attr('stroke', '#7f5af0').attr('stroke-width', 3);
@@ -192,14 +177,12 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
         if (typeof window.onNodeClick === 'function') window.onNodeClick(d.id);
     });
 
-    // ПКМ — открыть модальное окно редактирования
     node.on('contextmenu', (event, d) => {
         event.preventDefault();
         if (d.category === 'core' || d.is_branch) return;
         window.openEditModal(d);
     });
 
-    // Tick
     simulation.on('tick', () => {
         link
             .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
@@ -208,8 +191,11 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
     });
 };
 
-// ─── Добавление узла ──────────────────────────────────────────────────────────
-
+/**
+ * Добавить новый пользовательский узел в граф.
+ *
+ * @returns {Promise<void>}
+ */
 window.addNode = async function() {
     const title = prompt('Название нового узла:');
     if (!title) return;
@@ -222,7 +208,6 @@ window.addNode = async function() {
         });
         const data = await res.json();
         if (data.success) {
-            // Перезагружаем граф с сервера, чтобы не дублировать логику добавления
             await _reloadGraph();
         } else {
             alert('Ошибка: ' + (data.message || 'неизвестная'));
@@ -232,8 +217,11 @@ window.addNode = async function() {
     }
 };
 
-// ─── Сохранение позиций ───────────────────────────────────────────────────────
-
+/**
+ * Сохранить текущие позиции всех пользовательских узлов.
+ *
+ * @returns {Promise<void>}
+ */
 window.saveGraphPositions = async function() {
     if (!simulation) return;
 
@@ -247,8 +235,15 @@ window.saveGraphPositions = async function() {
     _showToast('Позиции сохранены ✓');
 };
 
+/**
+ * Сохранить позицию одного узла на сервере.
+ *
+ * @param {string} nodeId - Идентификатор узла.
+ * @param {number} x - Координата X.
+ * @param {number} y - Координата Y.
+ * @returns {Promise<void>}
+ */
 async function _saveNodePosition(nodeId, x, y) {
-    // Пропускаем служебные узлы
     if (typeof nodeId === 'string' && nodeId.startsWith('branch_')) return;
     if (nodeId === 'user_core') return;
 
@@ -263,10 +258,14 @@ async function _saveNodePosition(nodeId, x, y) {
     }
 }
 
-// ─── Модальное окно (ЕДИНОЕ место определения) ───────────────────────────────
-
+/**
+ * Открыть модальное окно для редактирования узла.
+ *
+ * @param {Object} nodeData - Данные узла для редактирования.
+ * @returns {void}
+ */
 window.openEditModal = function(nodeData) {
-    editingNodeId = String(nodeData.id);  // всегда string
+    editingNodeId = String(nodeData.id);
 
     document.getElementById('nodeTitle').value       = nodeData.title       || '';
     document.getElementById('nodeDescription').value = nodeData.description || '';
@@ -276,11 +275,21 @@ window.openEditModal = function(nodeData) {
     modal.style.display = 'flex';
 };
 
+/**
+ * Закрыть модальное окно редактирования и сбросить состояние.
+ *
+ * @returns {void}
+ */
 window.closeModal = function() {
     editingNodeId = null;
     document.getElementById('nodeModal').style.display = 'none';
 };
 
+/**
+ * Сохранить изменения узла после редактирования.
+ *
+ * @returns {Promise<void>}
+ */
 window.saveNode = async function() {
     if (!editingNodeId) return;
 
@@ -309,6 +318,11 @@ window.saveNode = async function() {
     }
 };
 
+/**
+ * Удалить выбранный пользовательский узел из графа.
+ *
+ * @returns {Promise<void>}
+ */
 window.deleteNode = async function() {
     if (!editingNodeId) return;
     if (!confirm('Удалить узел?')) return;
@@ -328,24 +342,30 @@ window.deleteNode = async function() {
     }
 };
 
-// Закрытие по клику на фон
+/**
+ * Обработчик клика по фону модального окна для закрытия.
+ *
+ * @param {Event} e - Событие клика.
+ * @returns {void}
+ */
 window.addEventListener('click', e => {
     const modal = document.getElementById('nodeModal');
     if (modal && e.target === modal) window.closeModal();
 });
 
-// ─── Перезагрузка данных с API ────────────────────────────────────────────────
-
+/**
+ * Перезагрузка данных графа с сервера и повторная инициализация графа.
+ *
+ * @returns {Promise<void>}
+ */
 async function _reloadGraph() {
     try {
         const res  = await fetch('/knowledge_graph_data');
         const data = await res.json();
 
-        // Нормализуем id к строкам — на случай если сервер вернул числа
         const nodes       = data.nodes.map(n => ({ ...n, id: String(n.id) }));
         const connections = data.connections || [];
 
-        // Читаем имя из DOM (оно уже вписано при первой загрузке)
         const userName = document.getElementById('graphCanvas')?.dataset.username || '';
         window.initGraph(nodes, connections, userName);
     } catch (err) {
@@ -353,8 +373,12 @@ async function _reloadGraph() {
     }
 }
 
-// ─── Toast-уведомление ────────────────────────────────────────────────────────
-
+/**
+ * Показывает всплывающее toast-уведомление.
+ *
+ * @param {string} msg - Текст уведомления.
+ * @returns {void}
+ */
 function _showToast(msg) {
     let toast = document.getElementById('_graphToast');
     if (!toast) {

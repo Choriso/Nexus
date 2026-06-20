@@ -1,4 +1,3 @@
-# app/routes.py
 from flask import Blueprint, render_template, make_response, request, session
 from flask_login import current_user
 
@@ -11,5 +10,3 @@ def start():
 @main_bp.route('/geolocation')
 def geolocation():
     return render_template('geolocation_ip.html')
-
-# Тестовые роуты можно оставить здесь или вынести в отдельный debug_bp

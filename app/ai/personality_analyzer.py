@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from celery import Celery, Task
 from dotenv import load_dotenv
@@ -32,9 +32,26 @@ celery.conf.update(
 
 
 class DBTask(Task):
+    """
+    Базовый Celery Task с автоматическим созданием и закрытием сессии базы данных.
+
+    Атрибуты:
+        _db (Session): Текущая сессия SQLAlchemy (private, для служебного использования)
+    """
+
     _db = None
 
     def __call__(self, *args, **kwargs):
+        """
+        Автоматически создаёт сессию БД перед запуском задачи и освобождает её после выполнения.
+
+        Args:
+            *args: Позиционные аргументы задачи.
+            **kwargs: Именованные аргументы задачи.
+
+        Returns:
+            object: Результат выполнения задачи.
+        """
         self._db = create_session()
         try:
             return self.run(*args, **kwargs)
@@ -44,11 +61,28 @@ class DBTask(Task):
 
     @property
     def db(self):
+        """
+        Возвращает текущую сессию SQLAlchemy для взаимодействия с БД.
+
+        Returns:
+            Session: Сессия базы данных.
+        """
         return self._db
 
 
 @celery.task(base=DBTask, name="ai.analyze_user_profile", bind=True)
-def analyze_user_profile(self, user_id, force=True):
+def analyze_user_profile(self, user_id: int, force: bool = True) -> dict:
+    """
+    Анализирует профиль пользователя: вычисляет OCEAN-профиль, MBTI, коммуникационный стиль и извлекает интересы.
+
+    Args:
+        self (DBTask): Инстанс задачи celery, с доступом к базе данных.
+        user_id (int): Идентификатор пользователя.
+        force (bool, optional): Форсировать запуск анализа даже если уже был ранее. По умолчанию True.
+
+    Returns:
+        dict: Статус выполнения анализа и ключевые результаты (или сообщение об ошибке).
+    """
     logger.info("Starting user profile analysis for user_id=%s", user_id)
     db = self.db
     now_utc = datetime.now(timezone.utc)
@@ -58,10 +92,6 @@ def analyze_user_profile(self, user_id, force=True):
             return {"error": "User not found"}
 
         profile = db.query(UserPersonalityProfile).filter_by(user_id=user_id).first()
-        # if profile and profile.updated_at and not force:
-        #     last_upd = profile.updated_at.replace(tzinfo=timezone.utc)
-        #     if now_utc - last_upd < timedelta(hours=1):
-        #         return {"status": "skipped", "reason": "recent_analysis"}
 
         messages = (
             db.query(Message)
@@ -84,6 +114,7 @@ def analyze_user_profile(self, user_id, force=True):
             profile = UserPersonalityProfile(user_id=user_id)
             db.add(profile)
 
+        # Обновление данных профиля по результатам анализа
         profile.openness = ocean[0]
         profile.conscientiousness = ocean[1]
         profile.extraversion = ocean[2]
@@ -133,7 +164,17 @@ def analyze_user_profile(self, user_id, force=True):
 
 
 @celery.task(base=DBTask, name="ai.update_compatibility", bind=True)
-def update_compatibility(self, user_id):
+def update_compatibility(self, user_id: int) -> dict:
+    """
+    Пересчитывает совместимость (compatibility) текущего пользователя с другими по типу личности и признакам OCEAN.
+
+    Args:
+        self (DBTask): Инстанс задачи celery, с доступом к базе данных.
+        user_id (int): Идентификатор пользователя, для которого происходит расчет.
+
+    Returns:
+        dict: Статус выполнения операции или сообщение об ошибке.
+    """
     db = self.db
     try:
         profiler = get_profiler()
@@ -184,6 +225,3 @@ def update_compatibility(self, user_id):
         logger.exception("Error in compatibility update for user_id=%s", user_id)
         db.rollback()
         return {"error": str(exc)}
-
-
-
