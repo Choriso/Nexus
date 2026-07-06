@@ -1,4 +1,7 @@
 from threading import Lock
+
+from config import config
+
 from .core import AIProfiler
 
 _profiler = None
@@ -10,5 +13,8 @@ def get_profiler() -> AIProfiler:
     if _profiler is None:
         with _lock:
             if _profiler is None:
-                _profiler = AIProfiler()
+                _profiler = AIProfiler(
+                    use_local_models=config.USE_LOCAL_AI_MODELS,
+                    config_obj=config,
+                )
     return _profiler

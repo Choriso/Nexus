@@ -36,6 +36,62 @@
         border-bottom: 1px solid #242629;
     }
 
+    .ai-report-card {
+        flex-shrink: 0;
+        background: linear-gradient(135deg, rgba(127, 90, 240, 0.12) 0%, rgba(22, 22, 26, 0.95) 60%);
+        border: 1px solid rgba(127, 90, 240, 0.45);
+        border-radius: 10px;
+        padding: 14px;
+        margin-bottom: 14px;
+        box-shadow: 0 0 18px rgba(127, 90, 240, 0.15), inset 0 0 24px rgba(127, 90, 240, 0.04);
+        display: none;
+    }
+    .ai-report-card.visible {
+        display: block;
+        animation: fadeIn 0.35s ease;
+    }
+    .ai-report-card__header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #fffffe;
+        font-weight: 700;
+        font-size: 0.95rem;
+        margin-bottom: 10px;
+        text-shadow: 0 0 12px rgba(127, 90, 240, 0.6);
+    }
+    .ai-report-card__header span.glow-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #7f5af0;
+        box-shadow: 0 0 8px #7f5af0, 0 0 16px rgba(127, 90, 240, 0.5);
+        animation: pulseGlow 2s ease-in-out infinite;
+    }
+    .ai-report-card__preview {
+        color: #94a1b2;
+        font-size: 0.88rem;
+        line-height: 1.55;
+        min-height: 2.4em;
+    }
+    .ai-report-card__preview .tw-cursor {
+        display: inline-block;
+        width: 2px;
+        height: 1em;
+        background: #7f5af0;
+        margin-left: 2px;
+        vertical-align: text-bottom;
+        animation: blinkCursor 0.9s step-end infinite;
+    }
+    @keyframes pulseGlow {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.6; transform: scale(0.85); }
+    }
+    @keyframes blinkCursor {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0; }
+    }
+
     #resultsList {
         flex-grow: 1;
         overflow-y: auto;
@@ -47,15 +103,133 @@
     .custom-scrollbar::-webkit-scrollbar-thumb { background: #7f5af0; border-radius: 10px; }
     .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a1b2; }
 
+    /* Обновленные стили карточки матчинга */
     .match-card {
         background: #242629;
         border: 1px solid #444b5a;
         border-radius: 8px;
         padding: 12px;
         margin-bottom: 12px;
-        transition: transform 0.2s;
+        transition: border-color 0.2s;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
     }
     .match-card:hover { border-color: #7f5af0; }
+
+    .match-card-header {
+        display: flex;
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .match-score {
+        font-size: 1.1rem;
+        font-weight: bold;
+        color: #fffffe;
+        background: #7f5af0;
+        padding: 6px 10px;
+        border-radius: 6px;
+        min-width: 45px;
+        text-align: center;
+    }
+
+    .match-info {
+        flex-grow: 1;
+    }
+
+    .match-name {
+        color: #fffffe;
+        font-weight: 600;
+        font-size: 1.05rem;
+    }
+
+    .match-node {
+        color: #94a1b2;
+        font-size: 0.85rem;
+        margin-top: 2px;
+    }
+
+    /* Стили для тегов совпадений */
+    .match-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 4px;
+    }
+    .match-tag {
+        background: rgba(44, 182, 125, 0.15);
+        color: #2cb67d;
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        border-radius: 4px;
+        border: 1px solid rgba(44, 182, 125, 0.3);
+    }
+
+    /* Стили для раскрывающегося отчета ИИ */
+    .ai-report-toggle {
+        cursor: pointer;
+        color: #94a1b2;
+        font-size: 0.85rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 10px;
+        background: rgba(127, 90, 240, 0.08);
+        border-radius: 6px;
+        transition: all 0.2s;
+        user-select: none;
+        margin-top: 4px;
+    }
+    .ai-report-toggle:hover {
+        background: rgba(127, 90, 240, 0.15);
+        color: #fffffe;
+    }
+    .ai-report-toggle .toggle-icon {
+        transition: transform 0.3s ease;
+        font-size: 0.7rem;
+    }
+    .ai-report-toggle.active .toggle-icon {
+        transform: rotate(180deg);
+    }
+
+    .ai-report-content {
+        display: none;
+        background: #16161a;
+        padding: 12px;
+        border-radius: 6px;
+        border: 1px solid #444b5a;
+        font-size: 0.9rem;
+        color: #94a1b2;
+        line-height: 1.5;
+        margin-top: 4px;
+    }
+    .ai-report-content.show {
+        display: block;
+        animation: fadeIn 0.3s ease;
+    }
+
+    .report-reason {
+        color: #fffffe;
+        font-weight: 500;
+        margin-bottom: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px dashed #444b5a;
+        font-size: 0.85rem;
+    }
+
+    .btn-profile {
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        white-space: nowrap;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-5px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
 
     .node circle { transition: r 0.2s ease; }
     .node:hover circle { r: 12px; }
@@ -114,10 +288,6 @@
     <section class="app-main-grid__main">
         <div id="graph-wrapper" style="position: relative;">
             <div id="graph-container">
-                {#
-                  FIX: имя пользователя — через data-атрибут, не через inline JS.
-                  Это защищает от XSS и упрощает чтение в JS.
-                #}
                 <svg id="graphCanvas"
                      width="100%" height="617"
                      data-username="{{ current_user.username | e }}">
@@ -134,13 +304,21 @@
             <h3>Подходящие люди</h3>
             <span id="matchCount" class="badge">0</span>
         </div>
+        <div class="ai-report-card" id="aiReportCard">
+            <div class="ai-report-card__header">
+                <span class="glow-dot"></span>
+                ✨ Nexus AI
+            </div>
+            <div class="ai-report-card__preview" id="aiReportPreview">
+                Выберите кандидата и откройте анализ совместимости
+            </div>
+        </div>
         <div id="resultsList" class="custom-scrollbar">
             <div class="placeholder-text">Нажмите на узел графа, чтобы найти единомышленников</div>
         </div>
     </aside>
 </div>
 
-{# Модальное окно — за пределами section, чтобы z-index работал корректно #}
 <div id="nodeModal">
     <div class="modal-box">
         <h2 id="modalTitle">Новый интерес</h2>
@@ -160,7 +338,6 @@
 
             <div class="modal-actions">
                 <button onclick="window.saveNode()"  class="btn-primary" style="flex:2; white-space:nowrap;">Сохранить</button>
-                {# FIX: id="deleteBtn" — управляем видимостью через JS, не через inline style #}
                 <button id="deleteBtn" onclick="window.deleteNode()" class="btn-primary"
                         style="background:#e53935; border-color:#b71c1c; flex:1; white-space:nowrap; display:none;">
                     Удалить
@@ -175,59 +352,9 @@
 </div>
 
 <script>
-    // Глобальные переменные для модалки
     window._editingNodeId = null;
 
-    window.addEventListener('load', () => {
-        const canvas = document.getElementById('graphCanvas');
-        const userName = canvas.dataset.username || "Я";
-
-        // --- ЗАГРУЗКА ДАННЫХ (Вариант 1, который у тебя заработал) ---
-        fetch('/knowledge_graph_data')
-            .then(res => res.json())
-            .then(data => {
-                console.log('[KnowledgeGraph] Data loaded:', data.nodes.length, 'nodes');
-                if (typeof initGraph === 'function') {
-                    // Инициализируем граф
-                    initGraph(data.nodes, data.connections, userName);
-                }
-            })
-            .catch(err => console.error("Ошибка загрузки графа:", err));
-
-        // --- ФУНКЦИЯ МАТЧИНГА (из Варианта 2) ---
-        window.onNodeClick = async function(nodeId) {
-            const list = document.getElementById('resultsList');
-            const badge = document.getElementById('matchCount');
-            list.innerHTML = '<div class="placeholder-text">Загрузка...</div>';
-
-            try {
-                const res = await fetch(`/api/graph/match/${nodeId}`);
-                const data = await res.json();
-
-                badge.textContent = data.length || 0;
-                if (!data.length) {
-                    list.innerHTML = '<div class="placeholder-text">Совпадений не найдено</div>';
-                    return;
-                }
-
-                list.innerHTML = data.map(m => `
-                    <div class="match-card">
-                        <div class="match-score">${m.compatibility}%</div>
-                        <div class="match-info">
-                            <div class="match-name">${_esc(m.user_name)}</div>
-                            <div class="match-reason">${_esc(m.node_title)}</div>
-                        </div>
-                        <button class="btn-primary" onclick="location.href='/viewProfile?user_id=${m.user_id}'">Профиль</button>
-                    </div>
-                `).join('');
-            } catch (err) {
-                list.innerHTML = '<div class="placeholder-text">Ошибка матчинга</div>';
-            }
-        };
-    });
-
     // --- ФУНКЦИИ УПРАВЛЕНИЯ УЗЛАМИ ---
-
     window.addNode = function() {
         window._editingNodeId = null;
         document.getElementById('nodeTitle').value = '';
@@ -271,27 +398,21 @@
     window.deleteNode = async function() {
         const id = window._editingNodeId;
         if (!id) return;
-
         if (!confirm('Вы уверены, что хотите удалить этот интерес?')) return;
 
         try {
-            console.log(`[Delete] Attempting to delete node: ${id}`);
-
             const res = await fetch(`/knowledge_graph/node/${id}`, {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' }
             });
 
             if (res.ok) {
-                console.log('[Delete] Success');
-                window.closeModal(); // Сначала закрываем окно
-                location.reload();   // Затем обновляем страницу
+                window.closeModal();
+                location.reload();
             } else {
-                console.error('[Delete] Server returned error:', res.status);
                 alert("Не удалось удалить узел. Ошибка сервера: " + res.status);
             }
         } catch (err) {
-            console.error('[Delete] Fetch error:', err);
             alert("Ошибка при отправке запроса на удаление.");
         }
     };
@@ -301,5 +422,163 @@
     function _esc(str) {
         return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
+
+    let _typewriterTimer = null;
+
+    function typewriterRender(element, text, options = {}) {
+        if (_typewriterTimer) {
+            clearTimeout(_typewriterTimer);
+            _typewriterTimer = null;
+        }
+        const safeText = String(text ?? '');
+        const mode = options.mode || 'word';
+        const delay = options.delay || (mode === 'char' ? 18 : 42);
+        const showCursor = options.cursor !== false;
+
+        element.textContent = '';
+        if (!safeText) return;
+
+        const units = mode === 'char'
+            ? safeText.split('')
+            : safeText.split(/(\s+)/);
+
+        let index = 0;
+        const cursor = document.createElement('span');
+        cursor.className = 'tw-cursor';
+        element.appendChild(cursor);
+
+        const tick = () => {
+            if (index >= units.length) {
+                if (!showCursor) cursor.remove();
+                return;
+            }
+            cursor.before(document.createTextNode(units[index]));
+            index += 1;
+            _typewriterTimer = setTimeout(tick, delay);
+        };
+        tick();
+    }
+
+    window.toggleReport = async function(element, targetUserId, nodeId) {
+        element.classList.toggle('active');
+        const content = element.nextElementSibling;
+        content.classList.toggle('show');
+
+        const textDiv = content.querySelector('.report-text');
+        const sidebarCard = document.getElementById('aiReportCard');
+        const sidebarPreview = document.getElementById('aiReportPreview');
+
+        if (content.classList.contains('show') && !content.dataset.loaded) {
+            const loadingHtml = '<span style="color: #2cb67d;">⚡ Анализируем совместимость...</span>';
+            textDiv.innerHTML = loadingHtml;
+            if (sidebarCard) sidebarCard.classList.add('visible');
+            if (sidebarPreview) {
+                sidebarPreview.textContent = '';
+                sidebarPreview.appendChild(Object.assign(document.createElement('span'), {
+                    textContent: '⚡ Анализируем совместимость...',
+                    style: 'color: #2cb67d;',
+                }));
+            }
+
+            try {
+                const res = await fetch(`/api/graph/report/${targetUserId}?node_id=${nodeId}`);
+                if (!res.ok) throw new Error("Server Error");
+
+                const data = await res.json();
+                const reportText = data.report
+                    ? data.report
+                    : 'Не удалось сформировать отчет.';
+
+                textDiv.textContent = '';
+                typewriterRender(textDiv, reportText, { mode: 'word', delay: 38 });
+
+                if (sidebarPreview) {
+                    typewriterRender(sidebarPreview, reportText, { mode: 'word', delay: 32 });
+                }
+
+                content.dataset.loaded = "true";
+            } catch (err) {
+                console.error("AI Report error:", err);
+                const fallback = 'Ошибка связи с нейросетью. Показан базовый шаблон совместимости.';
+                textDiv.textContent = '';
+                typewriterRender(textDiv, fallback, { mode: 'word', delay: 30 });
+                if (sidebarPreview) {
+                    typewriterRender(sidebarPreview, fallback, { mode: 'word', delay: 28 });
+                }
+            }
+        }
+    };
+
+    window.addEventListener('load', () => {
+        const canvas = document.getElementById('graphCanvas');
+        const userName = canvas.dataset.username || "Я";
+
+        fetch('/knowledge_graph_data')
+            .then(res => res.json())
+            .then(data => {
+                if (typeof initGraph === 'function') {
+                    initGraph(data.nodes, data.connections, userName);
+                }
+            });
+
+        // Основная функция поиска кандидатов
+        window.onNodeClick = async function(nodeId) {
+            const list = document.getElementById('resultsList');
+            const badge = document.getElementById('matchCount');
+            const sidebarCard = document.getElementById('aiReportCard');
+            const sidebarPreview = document.getElementById('aiReportPreview');
+            if (sidebarCard) sidebarCard.classList.remove('visible');
+            if (sidebarPreview) sidebarPreview.textContent = 'Выберите кандидата и откройте анализ совместимости';
+            list.innerHTML = '<div class="placeholder-text">Поиск в графе...</div>';
+
+            try {
+                // Запрашиваем только математический мэтчинг (теперь это будет мгновенно)
+                const res = await fetch(`/api/graph/match/${nodeId}`);
+                const data = await res.json();
+
+                badge.textContent = data.length || 0;
+                if (!data.length) {
+                    list.innerHTML = '<div class="placeholder-text">Совпадений не найдено</div>';
+                    return;
+                }
+
+                // Рендерим карточки
+                list.innerHTML = data.map(m => {
+                    const tagsHtml = (m.matched_tags && m.matched_tags.length > 0)
+                        ? `<div class="match-tags">
+                               ${m.matched_tags.map(tag => `<span class="match-tag">${_esc(tag)}</span>`).join('')}
+                           </div>`
+                        : '';
+
+                    return `
+                        <div class="match-card">
+                            <div class="match-card-header">
+                                <div class="match-score">${m.compatibility}%</div>
+                                <div class="match-info">
+                                    <div class="match-name">${_esc(m.user_name)}</div>
+                                    <div class="match-node">Узел: ${_esc(m.node_title)}</div>
+                                </div>
+                                <button class="btn-primary" onclick="location.href='/viewProfile?user_id=${m.user_id}'">Профиль</button>
+                            </div>
+
+                            ${tagsHtml}
+
+                            <div class="ai-report-toggle" onclick="toggleReport(this, ${m.user_id}, ${nodeId})">
+                                <span class="toggle-text">Посмотреть анализ ИИ </span>
+                                <span class="toggle-icon"> ▼</span>
+                            </div>
+
+                            <div class="ai-report-content">
+                                <div class="report-reason"><strong>Почему:</strong> ${_esc(m.match_reason)}</div>
+                                <div class="report-text">Ожидание запроса...</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                list.innerHTML = '<div class="placeholder-text" style="color: #e53935;">Ошибка поиска</div>';
+            }
+        };
+    });
 </script>
 {% endblock %}

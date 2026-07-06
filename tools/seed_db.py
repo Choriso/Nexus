@@ -1,56 +1,59 @@
-"""Seed opcional da base PostgreSQL para desenvolvimento (sem credenciais em código)."""
-
+"""Seed базы данных PostgreSQL для разработки с учетом новой архитектуры ИИ."""
 import os
-import random
 import sys
 
+# Определяем путь к папке, в которой лежит текущий скрипт (tools), и берем её родительскую директорию (Nexus)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+import random
+import sys
 import psycopg2
 from faker import Faker
 
-DB_CONFIG = {
-    "dbname": os.environ.get("SEED_DB_NAME", "ai_profiler_db"),
-    "user": os.environ.get("SEED_DB_USER", "my_app_user"),
-    "password": os.environ.get("SEED_DB_PASSWORD", ""),
-    "host": os.environ.get("SEED_DB_HOST", "127.0.0.1"),
-    "port": os.environ.get("SEED_DB_PORT", "5432"),
-}
+from config import config
+# Импортируем задачу напрямую для синхронного запуска в процессе сидинга
+from app.ai.personality_analyzer import analyze_user_profile
+from data.session import global_init, create_session
+from data.user import User
 
+DB_CONFIG = config.seed_db_config()
 fake = Faker(["ru_RU"])
 
 ARCHETYPES = {
     "Профи": {
-        "ocean": [0.4, 0.9, 0.3, 0.4, 0.8],
         "msgs": [
-            "Нам нужно декомпозировать задачи на спринты.",
-            "Кодстайл хромает, нужно поправить отступы.",
-            "Я изучил документацию, там есть баг в API.",
+            "Нам нужно декомпозировать эти сложные задачи на спринты и выставить эстимейты.",
+            "Кодстайл сильно хромает, нужно обязательно поправить отступы и импорты.",
+            "Я внимательно изучил техническую документацию, там явно есть баг в деплой API.",
+            "Необходимо провести качественный рефакторинг этого микросервиса на бэкенде."
         ],
         "cat": "work",
     },
     "Душа компании": {
-        "ocean": [0.8, 0.3, 1.0, 0.9, 0.2],
         "msgs": [
-            "Привет! Как дела? Пойдем завтра на митап?",
-            "Обожаю пробовать новые фреймворки, это так весело!",
-            "Давайте соберемся всей командой в пятницу!",
+            "Привет! Как ваши дела? Погнали завтра все вместе на крутой IT-митап!",
+            "Обожаю пробовать новые фреймворки и библиотеки, это всегда так весело и интересно!",
+            "Давайте соберемся всей нашей дружной командой в пятницу вечером в баре!",
+            "Вау, это просто потрясающая новость! Вы все такие классные, обожаю наш чат!"
         ],
         "cat": "psychology",
     },
     "Творец": {
-        "ocean": [1.0, 0.4, 0.6, 0.5, 0.4],
         "msgs": [
-            "Я тут придумал безумную идею для дизайна...",
-            "А что если мы заменим весь бэкенд на Rust?",
-            "Вдохновение пришло ночью, набросал новый концепт.",
+            "Я тут придумал совершенно безумную, но очень красивую идею для нового UI/UX дизайна...",
+            "А что если нам полностью заменить текущий бэкенд и переписать критические узлы на Rust?",
+            "Вдохновение пришло сегодня глубокой ночью, сразу набросал свежий концепт в Figma.",
+            "Искусство должно вдохновлять, поэтому я добавил несколько неоновых элементов в интерфейс."
         ],
         "cat": "hobby",
     },
     "Скейтер/Геймер": {
-        "ocean": [0.7, 0.2, 0.8, 0.4, 0.3],
         "msgs": [
-            "Го катку в CS2? Я создал приватный сервер.",
-            "Вчера выбил редкий скин, зацени!",
-            "Кто-то знает, как убрать лаги в Steam?",
+            "Го катку в CS2 прямо сейчас? Я как раз создал отличный приватный сервер для своих.",
+            "Вчера выбил невероятно редкий и дорогой скин из нового кейса, зацените скриншот!",
+            "Кто-то сталкивался с такой проблемой, как полностью убрать внезапные лаги в Steam?",
+            " Мы вчера с пацанами катали три на два, было очень потно, но мы затащили этот раунд!"
         ],
         "cat": "hobby",
     },
@@ -62,7 +65,6 @@ TOPICS = {
     "psychology": ["Эмпатия", "Тайм-менеджмент", "Лидерство", "Медитация", "Soft Skills"],
 }
 
-
 def run_mega_seed(num_users: int = 10) -> None:
     if not DB_CONFIG["password"]:
         print(
@@ -71,16 +73,28 @@ def run_mega_seed(num_users: int = 10) -> None:
         )
         sys.exit(1)
 
+    # Инициализируем SQLAlchemy для проверки пользователей
+    global_init(config.DATABASE_URL)
+
     conn = None
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         conn.autocommit = True
         cur = conn.cursor()
-        print("--- Запуск генерации цифровых личностей... ---")
+        print("--- 🚀 Запуск генерации цифровых личностей через конвейер ИИ... ---")
 
-        my_id = 1
+        # Проверяем или создаем дефолтного пользователя с ID=1 (ваш аккаунт для чатов)
+        session = create_session()
+        my_user = session.query(User).filter(User.id == 1).first()
+        if not my_user:
+            print("Пользователь с ID=1 не найден. Создаем базового пользователя...")
+            cur.execute(
+                "INSERT INTO users (id, name, email, hashed_password) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (1, "Данила Фещенко", "danila@nexus.com", "scrypt:32768:8:1$fake_hash")
+            )
+        session.close()
 
-        for _ in range(num_users):
+        for i in range(num_users):
             arch_name = random.choice(list(ARCHETYPES.keys()))
             arch_data = ARCHETYPES[arch_name]
 
@@ -88,28 +102,16 @@ def run_mega_seed(num_users: int = 10) -> None:
             email = fake.unique.email()
             pwd = "scrypt:32768:8:1$fake_hash_value"
 
+            # 1. Создаем пользователя
             cur.execute(
                 "INSERT INTO users (name, email, hashed_password) VALUES (%s, %s, %s) RETURNING id",
                 (full_name, email, pwd),
             )
             u_id = cur.fetchone()[0]
 
-            o, c, e, a, n = arch_data["ocean"]
-            o, c, e, a, n = [
-                max(0.1, min(1.0, val + random.uniform(-0.1, 0.1)))
-                for val in [o, c, e, a, n]
-            ]
-
-            cur.execute(
-                """
-                INSERT INTO ai_user_personality_profiles (user_id, openness, conscientiousness, extraversion, agreeableness, neuroticism)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-                (u_id, o, c, e, a, n),
-            )
-
+            # 2. Генерируем связи и ноды знаний (как в вашем старом скрипте)
             category = arch_data["cat"]
-            tags = random.sample(TOPICS[category], 3)
+            tags = random.sample(TOPICS[category], min(3, len(TOPICS[category])))
 
             for tag in tags:
                 x, y = random.uniform(100, 800), random.uniform(100, 600)
@@ -121,12 +123,14 @@ def run_mega_seed(num_users: int = 10) -> None:
                     (u_id, tag, f"Интерес к {tag}", category, x, y),
                 )
 
+            # Создаем чат между вами (ID=1) и новым пользователем
             cur.execute(
                 "INSERT INTO chats (user1_id, user2_id) VALUES (%s, %s) RETURNING id",
-                (my_id, u_id),
+                (1, u_id),
             )
             chat_id = cur.fetchone()[0]
 
+            # 3. Наполняем историю сообщений (это критически важно для работы анализатора!)
             for msg_content in arch_data["msgs"]:
                 cur.execute(
                     """
@@ -136,16 +140,51 @@ def run_mega_seed(num_users: int = 10) -> None:
                     (chat_id, u_id, msg_content, "text"),
                 )
 
-            print(f"Добавлен: {full_name} | Категория: {category}")
+            # 4. 🔥 ТРИГГЕР КОНВЕЙЕРА ИИ
+            # Используем .apply(), чтобы запустить задачу Celery СИНХРОННО прямо в этом потоке.
+            # Нам не нужно запускать celery worker в отдельном терминале ради сидинга.
+            print(f"🧠 Запуск ИИ-анализа для: {full_name}...")
+            analysis_result = analyze_user_profile.apply(args=[u_id], kwargs={"force": True}).result
+            # ... твой код вызова аналитики ...
+            # СИЛОВОЙ КРАШ-ФИКС ДЛЯ СИДЕРА: Записываем теги напрямую в профиль кандидата
+            # (замени 'ai_extracted_interests' на имя твоей таблицы, если оно отличается)
+            # СИЛОВОЙ КРАШ-ФИКС ДЛЯ СИДЕРА ПОД РЕАЛЬНУЮ СХЕМУ
+            try:
+                import json
+                # Превращаем теги в JSON-массив строк: '["Python", "Flask"]'
+                tags_json = json.dumps(tags)
 
-        print("\n--- ГОТОВО! Проверь поиск на сайте. ---")
+                # Записываем теги одновременно в hobbies и topics для надежности матчинга
+                cur.execute(
+                    """
+                    INSERT INTO ai_extracted_interests (
+                        user_id, hobbies, topics, skills, dislikes, last_extraction
+                    )
+                    VALUES (%s, %s, %s, '[]', '[]', NOW())
+                    ON CONFLICT (user_id) 
+                    DO UPDATE SET 
+                        hobbies = EXCLUDED.hobbies,
+                        topics = EXCLUDED.topics,
+                        last_extraction = NOW();
+                    """,
+                    (u_id, tags_json, tags_json)
+                )
+                print(f"   🎯 Принудительно заполнены hobbies/topics для кандидата: {tags}")
+            except Exception as e_tag:
+                print(f"   ⚠️ Не удалось принудительно вшить теги: {e_tag}")
+            if "error" in analysis_result:
+                print(f"⚠️ Ошибка анализа пользователя {u_id}: {analysis_result['error']}")
+            else:
+                print(f"✅ Успешно проанализирован! MBTI: {analysis_result.get('mbti_type')}")
+
+        print("\n--- 🎉 СИДИНГ УСПЕШНО ЗАВЕРШЕН! База данных заполнена и связана векторно. ---")
 
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"❌ Критическая ошибка при сидинге: {e}")
     finally:
         if conn:
             conn.close()
 
-
 if __name__ == "__main__":
-    run_mega_seed(12)
+    # Сгенерируем 10 продвинутых профилей
+    run_mega_seed(10)

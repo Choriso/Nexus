@@ -10,6 +10,7 @@ import uuid
 from PIL import Image as PILImage
 
 from app.ai.personality_analyzer import analyze_user_profile
+from app.ai_profiler.behavior_analyzer import compute_message_metadata, refresh_user_behavior_profile
 
 from data.chat import Chat
 from data.message import Message
@@ -210,14 +211,36 @@ def handle_message(data: dict):
         return
 
     with get_db_session() as db_sess:
+        from datetime import datetime
+
+        chat_id = data.get("chat_id")
+        prev_msg = None
+        if chat_id:
+            prev_msg = (
+                db_sess.query(Message)
+                .filter(Message.chat_id == chat_id)
+                .order_by(Message.timestamp.desc())
+                .first()
+            )
+        now = datetime.utcnow()
+        char_count, reply_time, emoji_count = compute_message_metadata(
+            text,
+            prev_timestamp=prev_msg.timestamp if prev_msg else None,
+            now=now,
+        )
         message = Message(
-            chat_id=data.get("chat_id"),
+            chat_id=chat_id,
             author_id=current_user.id,
             content=text if not file_url else file_url,
             message_type=message_type,
+            char_count=char_count,
+            reply_time=reply_time,
+            emoji_count=emoji_count,
+            timestamp=now,
         )
         db_sess.add(message)
         db_sess.commit()
+        refresh_user_behavior_profile(db_sess, current_user.id)
 
         emit("addMessageToChat", {
             "author": current_user.id,
@@ -257,10 +280,25 @@ def send_message():
                 return jsonify({"status": "error", "message": "Доступ запрещён"}), 403
 
     with get_db_session() as db_sess:
+        from datetime import datetime
+
         if reply_to_id:
             reply_message = db_sess.query(Message).filter(Message.id == reply_to_id).first()
             if not reply_message or reply_message.chat_id != chat_id:
                 return jsonify({"status": "error", "message": "Неверное сообщение для ответа"}), 400
+
+        prev_msg = (
+            db_sess.query(Message)
+            .filter(Message.chat_id == chat_id)
+            .order_by(Message.timestamp.desc())
+            .first()
+        )
+        now = datetime.utcnow()
+        char_count, reply_time, emoji_count = compute_message_metadata(
+            content,
+            prev_timestamp=prev_msg.timestamp if prev_msg else None,
+            now=now,
+        )
 
         new_message = Message(
             chat_id=chat_id,
@@ -268,9 +306,14 @@ def send_message():
             content=content,
             message_type=message_type,
             reply_to_id=reply_to_id,
+            char_count=char_count,
+            reply_time=reply_time,
+            emoji_count=emoji_count,
+            timestamp=now,
         )
         db_sess.add(new_message)
         db_sess.commit()
+        refresh_user_behavior_profile(db_sess, author_id)
         try:
             analyze_user_profile.delay(author_id)
         except Exception as e:

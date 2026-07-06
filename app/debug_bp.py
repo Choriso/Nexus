@@ -1,6 +1,5 @@
 from flask import make_response, session, request
 from flask_login import current_user
-from dotenv import load_dotenv
 
 main_bp = Blueprint('main', __name__)
 

@@ -11,7 +11,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer, util
 
+from config import config
+
+from .interest_extractor import ZeroShotInterestExtractor, build_labels_from_taxonomy, load_neural_extractor
+from .taxonomy import INTEREST_TAXONOMY
 from .text_utils import clean_user_text
+from .contextual_adapter import ContextualAdapter, get_contextual_adapter
 
 MBTI_TYPES = [
     "INTJ", "INTP", "ENTJ", "ENTP",
@@ -71,6 +76,7 @@ class ResidualBlock(nn.Module):
         dim (int): Размерность слоя.
         dropout (float): Доля Dropout.
     """
+
     def __init__(self, dim: int, dropout: float = 0.15):
         super().__init__()
         self.block = nn.Sequential(
@@ -105,6 +111,7 @@ class PersonalityClassifier(nn.Module):
         dropout (float): Доля Dropout.
         num_bins (int): Количество классов-бинов для одного признака.
     """
+
     def __init__(self, input_size: int = 388, dropout: float = 0.2, num_bins: int = NUM_BINS):
         super().__init__()
         self.num_bins = num_bins
@@ -176,6 +183,7 @@ class MBTIClassifier(nn.Module):
         input_size (int): Размер входного вектора.
         num_classes (int): Количество MBTI-классов.
     """
+
     def __init__(self, input_size: int = 384, num_classes: int = 16):
         super().__init__()
         self.net = nn.Sequential(
@@ -210,36 +218,71 @@ class AIProfiler:
     Args:
         db (Any, optional): Внешний объект или БД.
         use_local_models (bool, optional): Использовать локальные веса.
+        config_obj (Any, optional): Объект конфигурации (Config).
     """
-    def __init__(self, db: Any = None, use_local_models: bool = True) -> None:
+
+    def __init__(
+            self,
+            db: Any = None,
+            use_local_models: bool = True,
+            config_obj: Any = None,
+            adapter_enabled: bool = True
+    ) -> None:
         """
         Инициализация — подгрузка моделей и ресурсов.
 
         Args:
             db (Any, optional): Дополнительные данные.
             use_local_models (bool): Использовать локальные веса.
+            config_obj (Any, optional): Объект конфигурации (Config).
         """
+        self.db = db
+        self.use_local_models = use_local_models
+
+        self.config = config_obj if config_obj is not None else config
+
+        self.contextual_adapter = get_contextual_adapter(enabled=adapter_enabled)
+
+        # Перенаправляем bert_model и sbert на общую модель синглтона
+        self.bert_model = self.contextual_adapter.sbert_model
+        self.sbert = self.contextual_adapter.sbert_model
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        embedding_name = os.environ.get(
-            "EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2"
-        )
-        self.bert_model = SentenceTransformer(embedding_name, device=self.device)
         self.mbti_classes = MBTI_TYPES
+
+        # Zero-shot экстрактор интересов (Tier 1.5, fallback если нейросеть недоступна):
+        # переиспользует уже загруженный self.bert_model, эталонные эмбеддинги якорей
+        # считаются один раз здесь (см. _build_anchor_embeddings). Порог поднят до 0.65 —
+        # версия с точечным глобальным максимумом сходства (вместо mean по якорям) даёт
+        # более резкое разделение сигнал/шум, поэтому старый threshold 0.40 занижен.
+        semantic_threshold = getattr(self.config, "INTEREST_SEMANTIC_THRESHOLD", 0.65)
+        self.semantic_extractor = ZeroShotInterestExtractor(
+            bert_model=self.bert_model,
+            taxonomy=INTEREST_TAXONOMY,
+            threshold=semantic_threshold,
+        )
+
+        # Обучаемая PyTorch-голова интересов (Tier 1, основной путь если есть веса):
+        # load_neural_extractor никогда не бросает исключение — если файла весов нет
+        # (ещё не обучали) или он битый/несовместимый по архитектуре, self.neural_extractor
+        # остаётся None, и extract_interests() тихо использует semantic_extractor вместо неё.
+        neural_weights_path = getattr(
+            self.config, "INTEREST_HEAD_WEIGHTS_PATH", os.path.join("ml", "artifacts", "interest_head.pth")
+        )
+        neural_threshold = getattr(self.config, "INTEREST_NEURAL_THRESHOLD", 0.55)
+        self.neural_extractor = load_neural_extractor(
+            bert_model=self.bert_model,
+            weights_path=neural_weights_path,
+            threshold=neural_threshold,
+        )
 
         self.model = PersonalityClassifier(input_size=388, num_bins=NUM_BINS).to(self.device)
         self.mbti_model = MBTIClassifier(
             input_size=384, num_classes=len(self.mbti_classes)
         ).to(self.device)
 
-        base_path = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
-        self.model_path = os.path.join(
-            base_path, "ml/artifacts/personality_model_best.pth"
-        )
-        self.mbti_model_path = os.path.join(
-            base_path, "ml/artifacts/mbti_model.pth"
-        )
+        self.model_path = self.config.PERSONALITY_MODEL_PATH
+        self.mbti_model_path = self.config.MBTI_MODEL_PATH
 
         if os.path.exists(self.model_path):
             self.model.load_state_dict(
@@ -256,6 +299,9 @@ class AIProfiler:
             )
             self.has_mbti_model = True
         self.mbti_model.eval()
+
+        adapter_enabled = getattr(self.config, "CONTEXTUAL_ADAPTER_ENABLED", True)
+        self.contextual_adapter = get_contextual_adapter(enabled=adapter_enabled)
 
     @staticmethod
     def _ocean_to_soft_probs(mbti_from_ocean: str, temperature: float = 0.5) -> np.ndarray:
@@ -367,18 +413,16 @@ class AIProfiler:
 
     def _mbti_neural_blend_weight(self) -> float:
         """
-        Чтение веса для смеси MBTI-сетевой и rule-based моделей из переменной среды.
+        Чтение веса для смеси MBTI-сетевой и rule-based моделей из конфигурации.
 
         Returns:
             float: Вес в диапазоне [0, 1]. По дефолту 0.7 (если модель есть), иначе 0.0.
         """
-        env = os.environ.get("NEXUS_MBTI_NEURAL_BLEND_WEIGHT")
-        if env is not None:
-            try:
-                return float(max(0.0, min(1.0, float(env.strip()))))
-            except ValueError:
-                pass
-        return 0.7 if self.has_mbti_model else 0.0
+        try:
+            val = float(self.config.MBTI_NEURAL_BLEND_WEIGHT)
+            return float(max(0.0, min(1.0, val)))
+        except (TypeError, ValueError):
+            return 0.7 if self.has_mbti_model else 0.0
 
     def infer_mbti(self, scores: list[float]) -> str:
         """
@@ -480,7 +524,115 @@ class AIProfiler:
 
     def extract_interests(self, text: str) -> dict[str, Any]:
         """
-        Извлечение интересов, навыков и ценностей из текста.
+        Извлечение интересов, навыков и ценностей из текста — гибридный трёхуровневый pipeline.
+
+        Сценарий А (self.neural_extractor доступен, веса обучены):
+            Текст режется на предложения, каждое кодируется через self.bert_model.encode
+            и пропускается через обученную CustomInterestClassifier (softmax + threshold).
+            Даёт жёсткую классификацию по тегам платформы с наивысшей точностью.
+
+        Сценарий Б (весов нет или классификатор не обучен / self.neural_extractor is None,
+        либо сценарий А не нашёл ни одного совпадения выше threshold):
+            Автоматически используется self.semantic_extractor — улучшенный zero-shot
+            (точечный максимум сходства с якорями таксономии, без усреднения).
+
+        Tier 0 (оба метода выше вернули пустоту для категорий):
+            Полный откат на _rule_based_extract для hobbies/topics/skills/occupation.
+
+        Поля dislikes / short_term_goals / long_term_goals / values / preferences /
+        work_style ВСЕГДА считаются rule-based методом (_rule_based_extract) независимо
+        от того, сработала ли нейросеть или zero-shot — ни эмбеддинги, ни голова над ними
+        не заточены под детекцию негации ("не люблю спорт") и явных маркеров-триггеров,
+        для них регулярки остаются точнее и дешевле.
+
+        Args:
+            text (str): Текст для анализа.
+
+        Returns:
+            dict[str, Any]: Словарь найденных интересов, скиллов, целей и т.д.
+                Дополнительно содержит:
+                - "semantic_categories" — сырой результат сработавшего Tier
+                  (subcategory/score/evidence по каждой глобальной категории),
+                  пригодный для прямой записи в граф знаний (KnowledgeNode.category);
+                - "extraction_method" — какой именно Tier сработал: "neural" | "zero_shot" | "rule_based",
+                  полезно для мониторинга (как часто обученная голова реально используется)
+                  и для отладки без необходимости включать debug-логи.
+        """
+        if not text or not text.strip():
+            result = self._rule_based_extract(text)
+            result["extraction_method"] = "rule_based"
+            return result
+
+        cleaned = self.clean_text(text).lower()
+        rule_based = self._rule_based_extract(text)
+
+        if not cleaned:
+            rule_based["extraction_method"] = "rule_based"
+            return rule_based
+
+        categorized: dict[str, list[dict[str, Any]]] = {}
+        extraction_method = "rule_based"
+
+        # Сценарий А: обученная голова, если веса были найдены и загружены в __init__
+        if self.neural_extractor is not None:
+            categorized = self.neural_extractor.extract(cleaned)
+            if categorized:
+                extraction_method = "neural"
+
+        # Сценарий Б: голова недоступна ИЛИ ничего не нашла -> улучшенный zero-shot
+        if not categorized:
+            categorized = self.semantic_extractor.extract(cleaned)
+            if categorized:
+                extraction_method = "zero_shot"
+
+        if not categorized:
+            # ни нейросеть, ни zero-shot не дали сигнала -> полный откат на Tier 0
+            rule_based["extraction_method"] = "rule_based"
+            return rule_based
+
+        hobbies = [item["subcategory"] for item in categorized.get("hobby", [])]
+        skills = [item["subcategory"] for item in categorized.get("work", [])]
+        topics = [item["subcategory"] for item in categorized.get("psychology", [])]
+
+        # occupation по классификации — только если топ-совпадение в "work" заметно
+        # увереннее базового threshold (иначе оставляем rule-based значение как консервативное)
+        occupation = rule_based.get("occupation")
+        work_matches = categorized.get("work")
+        if work_matches:
+            top_work_score = work_matches[0]["score"]
+            active_threshold = (
+                self.neural_extractor.threshold
+                if extraction_method == "neural"
+                else self.semantic_extractor.threshold
+            )
+            if top_work_score >= max(active_threshold + 0.1, 0.5):
+                occupation = work_matches[0]["subcategory"]
+
+        return {
+            "hobbies": hobbies or rule_based.get("hobbies", []),
+            "topics": topics or rule_based.get("topics", []),
+            "skills": skills or rule_based.get("skills", []),
+            "dislikes": rule_based.get("dislikes", []),
+            "occupation": occupation,
+            "work_style": rule_based.get("work_style"),
+            "short_term_goals": rule_based.get("short_term_goals", []),
+            "long_term_goals": rule_based.get("long_term_goals", []),
+            "preferences": rule_based.get("preferences", {}),
+            "traits": list(dict.fromkeys(skills[:2] + topics[:2])) or rule_based.get("traits", []),
+            "values": rule_based.get("values", []),
+            "semantic_categories": categorized,
+            "extraction_method": extraction_method,
+        }
+
+    def _rule_based_extract(self, text: str) -> dict[str, Any]:
+        """
+        Tier 0 — rule-based извлечение интересов (словари/регулярки).
+
+        Надёжный fallback: используется, если zero-shot экстрактор (Tier 1) не
+        дал ни одного совпадения выше threshold, а также как единственный источник
+        полей dislikes/short_term_goals/values/preferences — семантическая
+        классификация по эмбеддингам не заточена под детекцию негации и маркеров-триггеров,
+        для них регулярки остаются адекватным и дешёвым решением.
 
         Args:
             text (str): Текст для анализа.
@@ -576,7 +728,12 @@ class AIProfiler:
         """
         return clean_user_text(text)
 
-    def calculate_compatibility(self, vec1: list[float], vec2: list[float]) -> float:
+    def calculate_compatibility(
+            self,
+            vec1: list[float] | np.ndarray,
+            vec2: list[float] | np.ndarray,
+            weights: list[float] | None = None
+    ) -> float:
         """
         Рассчитывает процент совместимости между двумя признаковыми векторами.
 
@@ -588,16 +745,27 @@ class AIProfiler:
             float: Совместимость [0; 100].
         """
         if not vec1 or not vec2:
-            return 0
-        v1, v2 = np.array(vec1), np.array(vec2)
-        distance = np.sqrt(np.mean((v1 - v2) ** 2))
-        return round(float(max(0, 100 * (1 - distance))), 2)
+            return 0.0
+
+        v1, v2 = np.array(vec1, dtype=np.float32), np.array(vec2, dtype=np.float32)
+
+        if weights is not None:
+            w = np.array(weights, dtype=np.float32)
+            w_norm = w / np.sum(w)
+            distance = np.sqrt(np.sum(w_norm * (v1 - v2) ** 2))
+        else:
+            distance = np.sqrt(np.mean((v1 - v2) ** 2))
+
+        return round(float(max(0.0, 100.0 * (1.0 - distance))), 2)
 
     def calculate_text_similarity(
-        self, texts1: list[str] | str, texts2: list[str] | str
+            self, texts1: list[str] | str, texts2: list[str] | str
     ) -> float | np.ndarray:
         """
         Косинусное сходство между двумя или более текстами по эмбеддингам SBERT.
+
+        Перед encode() тексты проходят через ContextualAdapter — сленг и
+        аббревиатуры раскрываются в семантически богатые описания.
 
         Args:
             texts1 (list[str] | str): Первый текст или список.
@@ -611,6 +779,9 @@ class AIProfiler:
         if isinstance(texts2, str):
             texts2 = [texts2]
 
+        texts1 = self.contextual_adapter.prepare_for_encoding(texts1)
+        texts2 = self.contextual_adapter.prepare_for_encoding(texts2)
+
         emb1 = self.bert_model.encode(texts1, convert_to_tensor=True)
         emb2 = self.bert_model.encode(texts2, convert_to_tensor=True)
 
@@ -619,6 +790,192 @@ class AIProfiler:
         if len(texts1) == len(texts2) == 1:
             return cos_sim_matrix.item()
         return cos_sim_matrix.cpu().numpy()
+
+    # Веса компонентов гибридного скора матчинга (calculate_hybrid_matching_score).
+    # Сумма = 1.0. OCEAN — намеренно наименьший вес: служит tie-breaker'ом
+    # внутри группы людей с одинаковыми тегами, но не может перебить их отсутствие
+    # (если tag_score=0, максимум, который даст OCEAN=1.0 — это 0.2 итогового скора,
+    # что ниже практически любого совпадения по тегам+семантике).
+    _TAG_SCORE_WEIGHT: float = 0.5
+    _SBERT_SCORE_WEIGHT: float = 0.3
+    _OCEAN_SCORE_WEIGHT: float = 0.2
+
+    @staticmethod
+    def _extract_tag_set(interests: dict[str, Any] | None) -> set[str]:
+        """Превращает JSON извлеченных интересов в плоское множество lowercase тегов."""
+        if not interests:
+            return set()
+        tags = set()
+        for field_name in ("hobbies", "topics", "skills"):
+            items = interests.get(field_name) or []
+            for item in items:
+                if isinstance(item, dict):
+                    val = item.get("subcategory") or item.get("name") or ""
+                else:
+                    val = str(item)
+                val_clean = val.lower().strip()
+                if val_clean:
+                    tags.add(val_clean)
+
+        occ = interests.get("occupation")
+        if occ:
+            if isinstance(occ, dict):
+                occ_val = occ.get("name") or ""
+            else:
+                occ_val = str(occ)
+            occ_clean = occ_val.lower().strip()
+            if occ_clean:
+                tags.add(occ_clean)
+
+        return tags
+
+    def _flatten_interests_to_text(self, interests: dict[str, Any] | None) -> str:
+        """
+        Собирает интересы пользователя в одну строку для SBERT-сравнения,
+        когда сырой исходный текст (сообщения) недоступен вызывающей стороне.
+
+        Args:
+            interests: Результат extract_interests() / AIExtractedInterests.
+
+        Returns:
+            str: Строка вида "Python backend Разработка ...". Пустая строка, если
+                интересов нет вовсе (тогда sbert_score в calculate_hybrid_matching_score
+                будет 0.0, а не упадёт на пустом encode()).
+        """
+        if not interests:
+            return ""
+        parts: list[str] = []
+        for field in ("hobbies", "skills", "topics"):
+            parts.extend(interests.get(field) or [])
+        if interests.get("occupation"):
+            parts.append(interests["occupation"])
+        raw = " ".join(str(p) for p in parts)
+        return self.contextual_adapter.enrich_text(raw).enriched if raw else ""
+
+    def calculate_hybrid_matching_score(
+        self,
+        search_query: str,
+        other_user_extracted_interests: dict[str, Any] | None,
+        other_user_raw_text: str = "",
+        ocean_compatibility: float | None = None,
+        current_user_ocean: list[float] | None = None,
+        other_user_ocean: list[float] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Гибридный скор матчинга поискового запроса (или узла графа) с интересами
+        другого пользователя. Заменяет сырой SBERT-мэтч строк, из-за которого
+        запрос "написание кода" смешивался с геймерскими тегами (CS2 и т.п.).
+
+        Formula:
+            final = 0.5 * tag_score + 0.3 * sbert_score + 0.2 * ocean_score
+
+        tag_score — жёсткий (0.0/1.0): пересеклись ли подкатегории таксономии
+        между запросом и интересами другого пользователя (см. _extract_tag_set).
+        Это доминирующий компонент — именно он не даёт геймеру с CS2 попасть
+        в топ по запросу "написание кода", даже если общий текст профиля
+        случайно похож по SBERT на уровне сырых строк.
+
+        sbert_score — косинусное сходство запроса с текстом интересов другого
+        пользователя (calculate_text_similarity), отрицательные значения
+        клэмпаются в 0, чтобы не утягивать итоговый скор ниже 0.
+
+        ocean_score — совместимость по OCEAN, ожидается уже готовым значением
+        из таблицы `ai_user_compatibility` (overall_score, шкала [0, 100],
+        см. UserCompatibility в data/ai.py) — эта функция не пересчитывает
+        overall_score заново, только нормализует его в [0, 1]. Если готового
+        значения нет, но переданы сырые OCEAN-векторы обоих пользователей,
+        считается через self.calculate_compatibility(...) как запасной путь.
+        Вес OCEAN всего 0.2, поэтому даже идеальная совместимость (1.0) не
+        может перебить отсутствие тегов (tag_score=0.0 -> максимум итогового
+        скора без тегов = 0.3 + 0.2 = 0.5 против, например, 0.5 + 0.3 + 0.0 = 0.8
+        у человека с совпадающим тегом, но нулевой OCEAN-совместимостью).
+
+        Args:
+            search_query: Текст поискового запроса или заголовок/описание узла графа.
+            other_user_extracted_interests: Результат extract_interests() другого
+                пользователя (или его сериализация из AIExtractedInterests в БД,
+                включая новое поле extraction_method — используется только для
+                информационных целей, на формулу не влияет напрямую).
+                None, если у пользователя ещё нет извлечённых интересов.
+            other_user_raw_text: Сырой текст интересов другого пользователя
+                (например, конкатенация его последних сообщений) для sbert_score.
+                Если не передан — собирается эвристически из hobbies/skills/topics
+                через _flatten_interests_to_text (менее точно, чем реальный сырой текст).
+            ocean_compatibility: Готовое значение совместимости из таблицы БД,
+                шкала [0, 100] (как overall_score в UserCompatibility). None, если
+                не рассчитывалось / недоступно.
+            current_user_ocean: OCEAN-вектор текущего пользователя — запасной
+                путь, если ocean_compatibility не передан.
+            other_user_ocean: OCEAN-вектор другого пользователя — используется
+                вместе с current_user_ocean как запасной путь.
+
+        Returns:
+            dict[str, Any]: {
+                "final_score": float,     # итоговый скор для сортировки, [0, 1]
+                "tag_score": float,       # 0.0 или 1.0
+                "sbert_score": float,     # [0, 1] после клэмпа
+                "ocean_score": float,     # [0, 1]
+                "matched_tags": list[str],   # какие именно подкатегории совпали
+                "query_tags": list[str],     # теги, извлечённые из search_query
+                "other_user_tags": list[str],
+            }
+        """
+        if not search_query or not search_query.strip():
+            return {
+                "final_score": 0.0,
+                "tag_score": 0.0,
+                "sbert_score": 0.0,
+                "ocean_score": 0.0,
+                "matched_tags": [],
+                "query_tags": [],
+                "other_user_tags": [],
+            }
+
+        enriched_query = self.contextual_adapter.enrich_text(search_query).enriched
+
+        # Шаг 1-2: структурированные категории из обогащённого поискового запроса
+        query_interests = self.extract_interests(enriched_query)
+        query_tags = self._extract_tag_set(query_interests)
+
+        # Шаг 3-4: жёсткий тег-скор против интересов другого пользователя
+        other_tags = self._extract_tag_set(other_user_extracted_interests)
+        matched_tags = query_tags & other_tags
+        tag_score = 1.0 if matched_tags else 0.0
+
+        # Шаг 5: семантический скор по сырым строкам
+        other_text = other_user_raw_text.strip() if other_user_raw_text else ""
+        if not other_text:
+            other_text = self._flatten_interests_to_text(other_user_extracted_interests)
+
+        if other_text.strip():
+            raw_similarity = self.calculate_text_similarity(enriched_query, other_text)
+            sbert_score = max(0.0, float(raw_similarity))
+        else:
+            sbert_score = 0.0
+
+        # OCEAN — tie-breaker, готовое значение из БД в приоритете над пересчётом
+        if ocean_compatibility is not None:
+            ocean_score = max(0.0, min(1.0, float(ocean_compatibility) / 100.0))
+        elif current_user_ocean and other_user_ocean:
+            ocean_score = max(0.0, self.calculate_compatibility(current_user_ocean, other_user_ocean) / 100.0)
+        else:
+            ocean_score = 0.0
+
+        final_score = (
+            self._TAG_SCORE_WEIGHT * tag_score
+            + self._SBERT_SCORE_WEIGHT * sbert_score
+            + self._OCEAN_SCORE_WEIGHT * ocean_score
+        )
+
+        return {
+            "final_score": round(float(final_score), 4),
+            "tag_score": tag_score,
+            "sbert_score": round(sbert_score, 4),
+            "ocean_score": round(ocean_score, 4),
+            "matched_tags": sorted(matched_tags),
+            "query_tags": sorted(query_tags),
+            "other_user_tags": sorted(other_tags),
+        }
 
     @staticmethod
     def get_compatible_mbti(mbti_type: str) -> list[str]:

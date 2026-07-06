@@ -91,7 +91,7 @@ def ordinal_loss(
     logits: torch.Tensor,
     target_bins: torch.Tensor,
     sample_weights: torch.Tensor
-) -> torch.Tensor:
+    ) -> torch.Tensor:
     """
     Ординальный (ordinal) лосс для задачи градуированного предсказания.
 

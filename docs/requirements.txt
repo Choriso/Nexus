@@ -257,3 +257,6 @@ wtforms==3.2.2
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
 psycopg2-binary
+
+pgvector==0.2.5
+Pillow

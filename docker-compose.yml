@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg16  # Официальный образ PostgreSQL 16 + pgvector
+    container_name: nexus_postgres
+    ports:
+      - "5432:5432"  # Пробрасывает порт наружу на ваш компьютер
+    environment:
+      POSTGRES_USER: my_app_user
+      POSTGRES_PASSWORD: Danil@2008
+      POSTGRES_DB: nexus_db
+    volumes:
+      - nexus_data:/var/lib/postgresql/data
+
+volumes:
+  nexus_data:

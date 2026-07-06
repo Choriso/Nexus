@@ -1,11 +1,10 @@
 import time
-import os
-from dotenv import load_dotenv
+
+from config import config
 from data import session as db_session
 from app.ai.models import UserPersonalityProfile
 
-load_dotenv()
-db_session.global_init(os.environ.get("DATABASE_URL", "sqlite:///db/blogs.db"))
+db_session.global_init(config.DATABASE_URL)
 
 
 def watch_profile(user_id):

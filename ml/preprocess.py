@@ -28,6 +28,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from app.ai_profiler.text_utils import clean_user_text
+from config import config
 
 
 def get_manual_features(text: str) -> list[float]:
@@ -81,8 +82,7 @@ def main() -> None:
         raw_data = json.load(f)
     print(f"Загружено {len(raw_data)} записей")
 
-    embedding_name = os.environ.get("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
-    model = SentenceTransformer(embedding_name, device=device)
+    model = SentenceTransformer(config.EMBEDDING_MODEL, device=device)
 
     texts = [clean_user_text(item["text"]).lower() for item in raw_data]
 

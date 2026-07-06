@@ -12,6 +12,9 @@ class Message(SqlAlchemyBase):
     content = sqlalchemy.Column(sqlalchemy.String, nullable=True)
     file_url = sqlalchemy.Column(sqlalchemy.String, nullable=True)
     timestamp = sqlalchemy.Column(sqlalchemy.DateTime, default=datetime.utcnow)
+    char_count = sqlalchemy.Column(sqlalchemy.Integer, nullable=True)
+    reply_time = sqlalchemy.Column(sqlalchemy.Float, nullable=True)
+    emoji_count = sqlalchemy.Column(sqlalchemy.Integer, nullable=True, default=0)
     message_type = sqlalchemy.Column(sqlalchemy.String, nullable=False)
     reply_to_id = sqlalchemy.Column(sqlalchemy.Integer, sqlalchemy.ForeignKey("messages.id"), nullable=True)
 

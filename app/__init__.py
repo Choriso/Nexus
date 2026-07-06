@@ -1,7 +1,7 @@
-import os
 from flask import Flask
 
-from .extensions import login_manager, socketio, cors
+from config import get_config
+from .extensions import login_manager, socketio, cors, migrate
 from data import session as db_session
 from data.user import User
 
@@ -15,44 +15,33 @@ def create_app() -> Flask:
     Returns:
         Flask: Экземпляр сконфигурированного Flask-приложения.
     """
+    cfg = get_config()
+
     app = Flask(
-        __name__, 
+        __name__,
         template_folder="../templates",
-        static_folder="../static"
+        static_folder="../static",
     )
 
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///chat.db")
-    app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "static/uploads/")
-
-    _secret: str | None = os.environ.get("SECRET_KEY")
-    _default_dev_secret: str = "dev_secret_key_change_me"
-    if os.environ.get("FLASK_ENV") == "production" and not _secret:
+    if cfg.is_production() and not cfg.SECRET_KEY:
         raise ValueError(
             "SECRET_KEY must be set in production (environment variable)."
         )
-    app.config["SECRET_KEY"] = _secret or _default_dev_secret
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = cfg.SQLALCHEMY_DATABASE_URI
+    app.config["UPLOAD_FOLDER"] = cfg.UPLOAD_FOLDER
+    app.config["SECRET_KEY"] = cfg.SECRET_KEY
+    app.config["MAX_CONTENT_LENGTH"] = cfg.MAX_CONTENT_LENGTH
 
     db_session.global_init(app.config["SQLALCHEMY_DATABASE_URI"])
-
-    max_content_length_env: str | None = os.environ.get("MAX_CONTENT_LENGTH")
-    if max_content_length_env is not None:
-        try:
-            app.config["MAX_CONTENT_LENGTH"] = int(max_content_length_env)
-        except ValueError:
-            app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
-    else:
-        app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
     login_manager.login_view = ""
     login_manager.init_app(app)
 
-    allowed_origins_env: str | None = os.environ.get("ALLOWED_ORIGINS")
-    if allowed_origins_env:
-        allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",")]
-    else:
-        allowed_origins = "*"
+    allowed_origins = cfg.allowed_origins_list()
 
     socketio.init_app(app, cors_allowed_origins=allowed_origins)
+    migrate.init_app(app)
     cors.init_app(
         app,
         resources={

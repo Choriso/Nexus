@@ -1,9 +1,12 @@
 import re
+
+import joblib
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from sklearn.feature_extraction.text import TfidfVectorizer
-import joblib
+
+from config import config
 
 nltk.download('stopwords', quiet=True)
 nltk.download('wordnet', quiet=True)
@@ -22,16 +25,17 @@ class TextDataProcessor:
         vectorizer_path (str): Путь к сериализованному файлу TF-IDF vectorizer.
         vectorizer (TfidfVectorizer): Векторизатор для преобразования текста в числовой формат.
     """
-    def __init__(self, model_path: str = "app/ai/models/tfidf_vectorizer.pkl"):
+    def __init__(self, model_path: str | None = None):
         """
         Инициализация TextDataProcessor с лемматизатором, списком стоп-слов и загрузкой/созданием TF-IDF vectorizer.
         
         Args:
-            model_path (str): Путь к файлу сериализованного векторизатора. По умолчанию -- путь внутри проекта.
+            model_path (str | None): Путь к файлу сериализованного векторизатора.
+                По умолчанию берётся из config.TFIDF_VECTORIZER_PATH.
         """
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words('english'))
-        self.vectorizer_path = model_path
+        self.vectorizer_path = model_path or config.TFIDF_VECTORIZER_PATH
         self.vectorizer = self._load_or_create_vectorizer()
 
     def _load_or_create_vectorizer(self) -> TfidfVectorizer:

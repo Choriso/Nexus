@@ -1,27 +1,32 @@
 import logging
-import os
 from datetime import datetime, timezone
 
 from celery import Celery, Task
-from dotenv import load_dotenv
 from sqlalchemy import and_, or_
-
+from sqlalchemy import text
 from app.ai_profiler import get_profiler
-from data.ai import AIExtractedInterests, UserCompatibility, UserPersonalityProfile
+from app.ai_profiler.behavior_analyzer import refresh_user_behavior_profile
+from app.ai_profiler.interest_graph import register_user_tags
+from app.ai_profiler.schwartz_analyzer import (
+    analyze_schwartz_values,
+    extract_onboarding_text,
+    upsert_schwartz_profile,
+)
+from config import config
+from data.ai import AIExtractedInterests, UserCompatibility, UserPersonalityProfile, UserSchwartzProfile
 from data.message import Message
 from data.session import create_session, global_init
 from data.user import User
 
-load_dotenv()
-
-db_url = os.environ.get("DATABASE_URL", "sqlite:///chat.db")
-global_init(db_url)
+global_init(config.DATABASE_URL)
 
 logger = logging.getLogger(__name__)
 
-broker_url = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
-result_backend = os.environ.get("CELERY_RESULT_BACKEND", broker_url)
-celery = Celery("ai_profiler", broker=broker_url, backend=result_backend)
+celery = Celery(
+    "ai_profiler",
+    broker=config.CELERY_BROKER_URL,
+    backend=config.CELERY_RESULT_BACKEND,
+)
 celery.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -97,7 +102,7 @@ def analyze_user_profile(self, user_id: int, force: bool = True) -> dict:
             db.query(Message)
             .filter_by(author_id=user_id)
             .order_by(Message.timestamp.desc())
-            .limit(50)
+            .limit(config.MAX_MESSAGES_PER_ANALYSIS)
             .all()
         )
         full_text = " ".join([m.content for m in messages if m.content])
@@ -120,6 +125,7 @@ def analyze_user_profile(self, user_id: int, force: bool = True) -> dict:
         profile.extraversion = ocean[2]
         profile.agreeableness = ocean[3]
         profile.neuroticism = ocean[4]
+        profile.embedding = ocean
         profile.mbti_type = analysis["mbti_type"]
         profile.communication_style = communication["communication_style"]
         profile.formality = communication["formality"]
@@ -149,8 +155,21 @@ def analyze_user_profile(self, user_id: int, force: bool = True) -> dict:
         extracted_interests.preferences = extracted.get("preferences", {})
         extracted_interests.last_extraction = now_utc
 
+        tag_list: list[str] = []
+        for field in ("hobbies", "skills", "topics"):
+            for item in extracted.get(field) or []:
+                if isinstance(item, dict) and item.get("subcategory"):
+                    tag_list.append(str(item["subcategory"]))
+                elif isinstance(item, str):
+                    tag_list.append(item)
+        if tag_list:
+            register_user_tags(db, user_id, tag_list)
+
+        refresh_user_behavior_profile(db, user_id)
+
         db.commit()
         update_compatibility.delay(user_id)
+        analyze_schwartz_values_task.delay(user_id)
         return {
             "status": "success",
             "user_id": user_id,
@@ -163,64 +182,117 @@ def analyze_user_profile(self, user_id: int, force: bool = True) -> dict:
         return {"error": str(exc)}
 
 
-@celery.task(base=DBTask, name="ai.update_compatibility", bind=True)
-def update_compatibility(self, user_id: int) -> dict:
+@celery.task(base=DBTask, name="ai.analyze_schwartz_values", bind=True)
+def analyze_schwartz_values_task(self, user_id: int) -> dict:
     """
-    Пересчитывает совместимость (compatibility) текущего пользователя с другими по типу личности и признакам OCEAN.
-
-    Args:
-        self (DBTask): Инстанс задачи celery, с доступом к базе данных.
-        user_id (int): Идентификатор пользователя, для которого происходит расчет.
-
-    Returns:
-        dict: Статус выполнения операции или сообщение об ошибке.
+    Фоновая задача: извлекает 10 ценностей Schwartz через Ollama (phi3:medium).
+    При ошибке или таймауте — безопасный no-op, HTTP-поток не затрагивается.
     """
     db = self.db
     try:
-        profiler = get_profiler()
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"error": "User not found"}
+
+        messages = (
+            db.query(Message)
+            .filter_by(author_id=user_id)
+            .order_by(Message.timestamp.desc())
+            .limit(config.MAX_MESSAGES_PER_ANALYSIS)
+            .all()
+        )
+        messages_text = " ".join(m.content for m in messages if m.content)
+        onboarding_text = extract_onboarding_text(user, messages_text)
+
+        if not onboarding_text.strip():
+            return {"status": "skipped", "reason": "no text"}
+
+        values = analyze_schwartz_values(onboarding_text)
+        if not values:
+            return {"status": "fallback", "reason": "ollama unavailable or parse failed"}
+
+        upsert_schwartz_profile(db, user_id, values)
+        return {"status": "success", "user_id": user_id}
+    except Exception as exc:
+        logger.exception("Schwartz analysis failed for user_id=%s", user_id)
+        db.rollback()
+        return {"error": str(exc)}
+
+
+@celery.task(base=DBTask, name="ai.update_compatibility", bind=True)
+def update_compatibility(self, user_id: int) -> dict:
+    """
+    Пересчитывает совместимость текущего пользователя с другими, используя
+    встроенный косинусный поиск pgvector на уровне СУБД.
+    """
+    db = self.db
+    try:
         my = db.query(UserPersonalityProfile).filter_by(user_id=user_id).first()
-        if not my:
-            return {"error": "My profile not found"}
+        if not my or not my.embedding:
+            return {"error": "My profile or embedding not found"}
 
-        my_vec = my.get_big_five_vector()
-        others = db.query(UserPersonalityProfile).filter(UserPersonalityProfile.user_id != user_id).all()
-        for other in others:
-            other_vec = other.get_big_five_vector()
-            score = profiler.calculate_compatibility(my_vec, other_vec)
+        # 1. Используем pgvector для расчета расстояний прямо в запросе.
+        # Метод cosine_distance возвращает расстояние (0 - идентичны, 2 - противоположны).
+        # Совместимость = 1 - (расстояние / 2).
+        # То есть если расстояние 0, совместимость 1 (100%).
 
-            compat = (
-                db.query(UserCompatibility)
-                .filter(
-                    or_(
-                        and_(
-                            UserCompatibility.user_id_1 == user_id,
-                            UserCompatibility.user_id_2 == other.user_id,
-                        ),
-                        and_(
-                            UserCompatibility.user_id_1 == other.user_id,
-                            UserCompatibility.user_id_2 == user_id,
-                        ),
-                    )
-                )
-                .first()
+        # Получаем всех остальных пользователей и сразу вычисляем косинусное расстояние
+        similar_profiles = db.query(
+            UserPersonalityProfile.user_id,
+            UserPersonalityProfile.mbti_type,
+            UserPersonalityProfile.embedding.cosine_distance(my.embedding).label("distance")
+        ).filter(
+            UserPersonalityProfile.user_id != user_id,
+            UserPersonalityProfile.embedding.isnot(None)  # Игнорируем тех, у кого еще нет вектора
+        ).all()
+
+        if not similar_profiles:
+            return {"status": "success", "updated": 0}
+
+        # 2. Пакетная загрузка существующих связей (оставляем вашу логику маппинга)
+        existing_compats = db.query(UserCompatibility).filter(
+            or_(
+                UserCompatibility.user_id_1 == user_id,
+                UserCompatibility.user_id_2 == user_id,
             )
+        ).all()
+
+        compat_map = {}
+        for c in existing_compats:
+            target_id = c.user_id_2 if c.user_id_1 == user_id else c.user_id_1
+            compat_map[target_id] = c
+
+        # 3. Обновление объектов SQLAlchemy
+        new_compats = []
+        for other in similar_profiles:
+            # Расстояние от 0 до 2. Переводим в процент сходства [0.0, 1.0]
+            # Чем меньше расстояние, тем больше сходство.
+            score_normalized = round(1.0 - (float(other.distance) / 2.0), 4)
+            # Защита от отрицательных значений на всякий случай
+            score_normalized = max(0.0, score_normalized)
+
+            compat = compat_map.get(other.user_id)
+
             if not compat:
                 compat = UserCompatibility(user_id_1=user_id, user_id_2=other.user_id)
-                db.add(compat)
+                new_compats.append(compat)
 
-            compat.overall_score = round(score / 100.0, 4)
-            compat.romantic_score = compat.overall_score
-            compat.professional_score = compat.overall_score
-            compat.creative_score = compat.overall_score
-            compat.interest_overlap = compat.overall_score
+            compat.overall_score = score_normalized
+            compat.romantic_score = score_normalized
+            compat.professional_score = score_normalized
+            compat.creative_score = score_normalized
+            compat.interest_overlap = score_normalized
             compat.recommendations = {
-                "summary": f"Compatibility between {user_id} and {other.user_id}",
+                "summary": f"Compatibility calculated via pgvector cosine distance",
                 "mbti_pair": [my.mbti_type, other.mbti_type],
             }
             compat.calculated_at = datetime.now(timezone.utc)
 
+        if new_compats:
+            db.add_all(new_compats)
+
         db.commit()
-        return {"status": "success", "updated": len(others)}
+        return {"status": "success", "updated": len(similar_profiles)}
     except Exception as exc:
         logger.exception("Error in compatibility update for user_id=%s", user_id)
         db.rollback()
