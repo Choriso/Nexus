@@ -1,4 +1,5 @@
 import os
+import logging
 
 from flask import Blueprint, render_template, request, redirect, abort, jsonify, current_app
 from flask_login import login_required, current_user
@@ -15,11 +16,14 @@ from app.ai.matching_engine import calculate_multidimensional_compatibility
 from app.ai_profiler.contextual_adapter import get_contextual_adapter
 from config import config
 import redis
+import config  # Единый модуль конфигурации из корня проекта
 from app.db import get_db_session  # Контекстный менеджер БД
 from data.user import User
 from data.ai import UserPersonalityProfile, UserSchwartzProfile
 from data.behavior import UserBehaviorProfile
 from sqlalchemy.orm import joinedload
+
+logger = logging.getLogger(__name__)
 
 # Инициализация Redis для кэша (используем БД 1, чтобы не мешать Celery в БД 0)
 # Если в config нет REDIS_CACHE_URL, фоллбек на локальный
@@ -503,12 +507,11 @@ def _ocean_vector(profile: UserPersonalityProfile | None) -> list[float] | None:
 def match_by_node(node_id):
     """
     Поиск наиболее подходящих пользователей по выбранному узлу графа.
-    ОПТИМИЗИРОВАНО: Убраны тяжелые вызовы нейросети на лету, убраны мутирующие запросы (register_user_tags),
-    исправлен N+1 и двойные сессии БД.
+    Исправлено: теперь гарантированно используется calculate_hybrid_matching_score
+    и жесткие теги имеют приоритет над характером.
     """
-
-    # Оставляем ОДИН контекстный менеджер для всего эндпоинта
     with get_db_session() as db_sess:
+        current_user_obj = db_sess.query(User).get(current_user.id)
         raw_cat = request.args.get('category', 'psychology').lower().strip()
         cat_mapping = {
             'работа': 'work', 'work': 'work',
@@ -519,201 +522,220 @@ def match_by_node(node_id):
         config_data = CATEGORY_CONFIG.get(cat_type, CATEGORY_CONFIG['psychology'])
 
         from app.ai_profiler import get_profiler
-        from data.ai import AIExtractedInterests, UserCompatibility, UserPersonalityProfile, UserSchwartzProfile
-        from data.behavior import UserBehaviorProfile
-        from data.knowledge_graph import KnowledgeNode
-        from data.interest_hierarchy import InterestHierarchyNode, UserInterestGraphWeight
-        from app.ai_profiler.interest_graph import build_query_weights
+        from data.ai import AIExtractedInterests, UserCompatibility
 
         profiler = get_profiler()
         contextual_adapter = get_contextual_adapter(
             enabled=getattr(config, "CONTEXTUAL_ADAPTER_ENABLED", True)
         )
 
-        target_node = db_sess.query(KnowledgeNode).get(node_id)
-        if not target_node:
-            return jsonify({"error": "Node not found"}), 404
+        with get_db_session() as db_sess:
+            target_node = db_sess.query(KnowledgeNode).get(node_id)
+            if not target_node:
+                return jsonify({"error": "Node not found"}), 404
 
-        # Обогащаем поисковый запрос через быстрый ContextualAdapter
-        raw_search_query = f"{target_node.title}. {target_node.description or ''}".strip()
-        enrichment = contextual_adapter.enrich_text(raw_search_query)
-        search_query = enrichment.enriched
+            # Поисковый запрос из узла → обогащение через ContextualAdapter
+            raw_search_query = f"{target_node.title}. {target_node.description or ''}".strip()
+            search_query = contextual_adapter.enrich_text(raw_search_query).enriched
 
-        # ОПТИМИЗАЦИЯ: Вместо вызова тяжелого ИИ экстрактора в рантайме,
-        # собираем теги, которые ContextualAdapter уже вытащил по словарям и таксономии!
-        raw_tags = enrichment.matched_concepts + enrichment.subcategories
+            # Получаем узлы других пользователей
+            candidates = db_sess.query(KnowledgeNode).options(
+                joinedload(KnowledgeNode.user)
+            ).filter(
+                KnowledgeNode.user_id != current_user.id
+            ).all()
 
-        # Принудительно очищаем, убираем пробелы и переводим в lowercase
-        query_tags = set()
-        for t in raw_tags:
-            clean_t = str(t).lower().strip()
-            # Защита: не пускаем системные категории в теги
-            if clean_t not in ['work', 'hobby', 'psychology', 'работа', 'хобби', 'психология']:
-                query_tags.add(clean_t)
+            if not candidates:
+                return jsonify([])
 
-        # Если адаптер ничего не вытащил, берем название самого узла
-        if not query_tags and target_node.title:
-            node_title_clean = target_node.title.lower().strip()
-            if node_title_clean not in ['work', 'hobby', 'psychology']:
-                query_tags.add(node_title_clean)
+            user_ids = {node.user_id for node in candidates}
 
-        # Получаем узлы других пользователей с ЛИМИТОМ (например, топ-100 кандидатов для стабильности)
-        candidates = db_sess.query(KnowledgeNode).options(
-            joinedload(KnowledgeNode.user)
-        ).filter(
-            KnowledgeNode.user_id != current_user.id
-        ).limit(100).all()
+            # БАТЧ-ЗАПРОСЫ (Защита от N+1)
+            profiles = db_sess.query(UserPersonalityProfile).filter(
+                UserPersonalityProfile.user_id.in_(user_ids)
+            ).all()
+            profile_map = {p.user_id: p for p in profiles}
 
-        if not candidates:
-            return jsonify([])
+            extracted_rows = db_sess.query(AIExtractedInterests).filter(
+                AIExtractedInterests.user_id.in_(user_ids)
+            ).all()
 
-        user_ids = {node.user_id for node in candidates}
+            extracted_map = {}
+            for row in extracted_rows:
+                extracted_map[row.user_id] = {
+                    "hobbies": row.hobbies or [],
+                    "topics": row.topics or [],
+                    "skills": row.skills or [],
+                    "occupation": row.occupation,
+                    "semantic_categories": getattr(row, "semantic_categories", None) or {},
+                    "extraction_method": getattr(row, "extraction_method", None),
+                }
 
-        # БАТЧ-ЗАПРОСЫ (Защита от N+1)
-        profiles = db_sess.query(UserPersonalityProfile).filter(
-            UserPersonalityProfile.user_id.in_(user_ids)
-        ).all()
-        profile_map = {p.user_id: p for p in profiles}
+            compat_rows = db_sess.query(UserCompatibility).filter(
+                ((UserCompatibility.user_id_1 == current_user.id) & (UserCompatibility.user_id_2.in_(user_ids))) |
+                ((UserCompatibility.user_id_2 == current_user.id) & (UserCompatibility.user_id_1.in_(user_ids)))
+            ).all()
 
-        extracted_rows = db_sess.query(AIExtractedInterests).filter(
-            AIExtractedInterests.user_id.in_(user_ids)
-        ).all()
+            compat_map = {}
+            for row in compat_rows:
+                other_id = row.user_id_2 if row.user_id_1 == current_user.id else row.user_id_1
+                compat_map[other_id] = row.overall_score
 
-        extracted_map = {row.user_id: row for row in extracted_rows}
-
-        compat_rows = db_sess.query(UserCompatibility).filter(
-            ((UserCompatibility.user_id_1 == current_user.id) & (UserCompatibility.user_id_2.in_(user_ids))) |
-            ((UserCompatibility.user_id_2 == current_user.id) & (UserCompatibility.user_id_1.in_(user_ids)))
-        ).all()
-
-        compat_map = {}
-        for row in compat_rows:
-            other_id = row.user_id_2 if row.user_id_1 == current_user.id else row.user_id_1
-            compat_map[other_id] = row.overall_score
-
-        my_profile = db_sess.query(UserPersonalityProfile).filter_by(user_id=current_user.id).first()
-        my_vec = [0.0] * 5
-        if my_profile:
-            my_vec = [
-                my_profile.openness, my_profile.conscientiousness, my_profile.extraversion,
-                my_profile.agreeableness, my_profile.neuroticism
-            ]
-
-        schwartz_rows = db_sess.query(UserSchwartzProfile).filter(
-            UserSchwartzProfile.user_id.in_(user_ids | {current_user.id})
-        ).all()
-        schwartz_map = {row.user_id: row for row in schwartz_rows}
-        my_schwartz = schwartz_map.get(current_user.id)
-
-        behavior_rows = db_sess.query(UserBehaviorProfile).filter(
-            UserBehaviorProfile.user_id.in_(user_ids | {current_user.id})
-        ).all()
-        behavior_map = {row.user_id: row for row in behavior_rows}
-        my_behavior = behavior_map.get(current_user.id)
-
-        # Preload hierarchy node names
-        hierarchy_nodes = db_sess.query(InterestHierarchyNode).all()
-        hierarchy_node_names = {n.id: n.name for n in hierarchy_nodes}
-
-        # Preload graph weights из базы (БЕЗ динамической регистрации register_user_tags на лету)
-        graph_weights_rows = db_sess.query(UserInterestGraphWeight).filter(
-            UserInterestGraphWeight.user_id.in_(user_ids | {current_user.id})
-        ).all()
-        graph_weights_map = {}
-        for row in graph_weights_rows:
-            graph_weights_map.setdefault(row.user_id, {})[row.node_id] = row.weight
-
-        # Pre-build query weights на основе вытащенных тегов
-        query_graph_weights = build_query_weights(db_sess, query_tags)
-
-        # ДОБАВЛЕНО: Регистрируем теги текущего пользователя один раз, если их еще нет в базе
-        if query_tags and current_user.id not in graph_weights_map:
-            from app.ai_profiler.interest_graph import register_user_tags
-            # Фоновая асинхронная задача подошла бы лучше, но пока просто выносим из цикла
-            register_user_tags(db_sess, current_user.id, list(query_tags))
-            # Обновляем мапу весов для текущего юзера на всякий случай
-            graph_weights_map[current_user.id] = build_query_weights(db_sess, query_tags)
-
-        matches = []
-        for node in candidates:
-            candidate_user_id = node.user_id
-            if not candidate_user_id:
-                continue
-
-            other_profile = profile_map.get(candidate_user_id)
-            other_extracted = extracted_map.get(candidate_user_id)
-
-            # Big Five / OCEAN (базовый компонент 50%)
-            ocean_score_val = compat_map.get(candidate_user_id)
-            if ocean_score_val is not None:
-                ocean_score_normalized = (
-                    float(ocean_score_val)
-                    if float(ocean_score_val) <= 1.0
-                    else float(ocean_score_val) / 100.0
-                )
-            elif my_profile and other_profile:
-                other_vec = [
-                    other_profile.openness, other_profile.conscientiousness, other_profile.extraversion,
-                    other_profile.agreeableness, other_profile.neuroticism
+            my_profile = db_sess.query(UserPersonalityProfile).filter_by(user_id=current_user.id).first()
+            my_vec = [0.0] * 5
+            if my_profile:
+                my_vec = [
+                    my_profile.openness, my_profile.conscientiousness, my_profile.extraversion,
+                    my_profile.agreeableness, my_profile.neuroticism
                 ]
-                processed_other_vec = other_vec[:]
-                for c_idx in config_data['complementary']:
-                    processed_other_vec[c_idx] = 1.0 - other_vec[c_idx]
 
-                ocean_score_normalized = profiler.calculate_compatibility(
-                    my_vec, processed_other_vec, weights=config_data['weights']
-                ) / 100.0
-            else:
-                ocean_score_normalized = 0.5
+            schwartz_rows = db_sess.query(UserSchwartzProfile).filter(
+                UserSchwartzProfile.user_id.in_(user_ids | {current_user.id})
+            ).all()
+            schwartz_map = {row.user_id: row for row in schwartz_rows}
+            my_schwartz = schwartz_map.get(current_user.id)
 
-            # Вызываем расчет движка (он теперь мгновенный, т.к. SBERT закэширован как синглтон)
-            score_dict = calculate_multidimensional_compatibility(
+            behavior_rows = db_sess.query(UserBehaviorProfile).filter(
+                UserBehaviorProfile.user_id.in_(user_ids | {current_user.id})
+            ).all()
+            behavior_map = {row.user_id: row for row in behavior_rows}
+            my_behavior = behavior_map.get(current_user.id)
+
+            from data.interest_hierarchy import InterestHierarchyNode, UserInterestGraphWeight
+            from app.ai_profiler.interest_graph import register_user_tags, build_query_weights, resolve_node_title_to_tags
+
+            # ✅ ИСПРАВЛЕНО: Используем resolve_node_title_to_tags для правильного резолвинга
+            # описательных названий узлов (например, "я люблю музыку" → "music_audio")
+            query_tags = resolve_node_title_to_tags(
                 db_sess,
-                ocean_score_normalized=ocean_score_normalized,
-                query_tags=query_tags,
-                current_user_id=current_user.id,
-                other_user_id=candidate_user_id,
-                other_extracted=other_extracted,
-                my_schwartz=my_schwartz,
-                other_schwartz=schwartz_map.get(candidate_user_id),
-                my_behavior=my_behavior,
-                other_behavior=behavior_map.get(candidate_user_id),
-                query_graph_weights=query_graph_weights,
-                other_graph_weights=graph_weights_map.get(candidate_user_id, None),
-                hierarchy_node_names=hierarchy_node_names,
+                node_title=target_node.title,
+                node_description=target_node.description or "",
+                profiler=profiler
             )
-            final_score = score_dict.get("final_score", 0.0)
-            matched_tags = score_dict.get("matched_tags", [])
+            
+            # Если всё ещё ничего не резолвилось, значит узел не в иерархии — пропускаем
+            if not query_tags:
+                logger.warning(
+                    f"[match_by_node] Could not resolve node title '{target_node.title}' "
+                    f"to any slug in hierarchy. Aborting search."
+                )
+                return jsonify([])
 
-            other_user_name = node.user.name if node.user else f"Пользователь #{candidate_user_id}"
+            # Register query tags once before loop
+            if query_tags:
+                register_user_tags(db_sess, current_user.id, list(query_tags))
 
-            reason = "Похожие интересы"
-            if cat_type == 'work' and my_profile and other_profile:
-                if abs(my_vec[2] - other_profile.extraversion) > 0.4:
-                    reason = "Дополняет вашу команду"
+            # Preload hierarchy node names
+            hierarchy_nodes = db_sess.query(InterestHierarchyNode).all()
+            hierarchy_node_names = {n.id: n.name for n in hierarchy_nodes}
 
-            matches.append({
-                "user_id": candidate_user_id,
-                "user_name": other_user_name,
-                "node_title": node.title,
-                "compatibility": round(final_score * 100, 1),
-                "category": node.category,
-                "match_reason": reason,
-                "matched_tags": matched_tags,
-                "score_breakdown": {
-                    "big_five": score_dict.get("big_five_score"),
-                    "graph_interest": score_dict.get("graph_interest_score"),
-                    "schwartz": score_dict.get("schwartz_score"),
-                    "behavioral": score_dict.get("behavioral_score"),
-                    "weights": score_dict.get("weights_applied"),
-                },
-                "_score_for_report": final_score,
-            })
+            # Preload graph weights for candidates and current user
+            graph_weights_rows = db_sess.query(UserInterestGraphWeight).filter(
+                UserInterestGraphWeight.user_id.in_(user_ids | {current_user.id})
+            ).all()
+            graph_weights_map = {}
+            for row in graph_weights_rows:
+                graph_weights_map.setdefault(row.user_id, {})[row.node_id] = row.weight
 
-        # Исправлено: Сортируем ОДИН раз
-        matches.sort(key=lambda x: x['compatibility'], reverse=True)
-        response_data = jsonify(matches)
-    return response_data
+            # Принудительная регистрация тегов для ВСЕХ кандидатов
+            for c_id in user_ids:
+                if c_id in extracted_map:
+                    other_tag_set = profiler._extract_tag_set(extracted_map[c_id])
+                    if other_tag_set:
+                        register_user_tags(db_sess, c_id, list(other_tag_set))
+
+            # Перезагружаем веса после регистрации
+            graph_weights_rows = db_sess.query(UserInterestGraphWeight).filter(
+                UserInterestGraphWeight.user_id.in_(user_ids | {current_user.id})
+            ).all()
+            graph_weights_map = {}
+            for row in graph_weights_rows:
+                graph_weights_map.setdefault(row.user_id, {})[row.node_id] = row.weight
+
+            # Pre-build query weights once
+            query_graph_weights = build_query_weights(db_sess, query_tags)
+
+            matches = []
+            for node in candidates:
+                candidate_user_id = node.user_id
+                if not candidate_user_id:
+                    continue
+
+                other_profile = profile_map.get(candidate_user_id)
+                other_extracted = extracted_map.get(candidate_user_id)
+
+                # Big Five / OCEAN
+                ocean_score_val = compat_map.get(candidate_user_id)
+                if ocean_score_val is not None:
+                    ocean_score_normalized = (
+                        float(ocean_score_val)
+                        if float(ocean_score_val) <= 1.0
+                        else float(ocean_score_val) / 100.0
+                    )
+                elif my_profile and other_profile:
+                    other_vec = [
+                        other_profile.openness, other_profile.conscientiousness, other_profile.extraversion,
+                        other_profile.agreeableness, other_profile.neuroticism
+                    ]
+                    processed_other_vec = other_vec[:]
+                    for c_idx in config_data['complementary']:
+                        processed_other_vec[c_idx] = 1.0 - other_vec[c_idx]
+
+                    ocean_score_normalized = profiler.calculate_compatibility(
+                        my_vec, processed_other_vec, weights=config_data['weights']
+                    ) / 100.0
+                else:
+                    ocean_score_normalized = 0.5
+
+                score_dict = calculate_multidimensional_compatibility(
+                    db_sess,
+                    ocean_score_normalized=ocean_score_normalized,
+                    query_tags=query_tags,
+                    current_user_id=current_user.id,
+                    other_user_id=candidate_user_id,
+                    other_extracted=other_extracted,
+                    my_schwartz=my_schwartz,
+                    other_schwartz=schwartz_map.get(candidate_user_id),
+                    my_behavior=my_behavior,
+                    other_behavior=behavior_map.get(candidate_user_id),
+                    query_graph_weights=query_graph_weights,
+                    other_graph_weights=graph_weights_map.get(candidate_user_id, {}),
+                    hierarchy_node_names=hierarchy_node_names,
+                )
+                final_score = score_dict.get("final_score", 0.0)
+                matched_tags = score_dict.get("matched_tags", [])
+
+                # ⚠️ ПРОПУСКАЕМ пользователей БЕЗ совпадений по тегам
+                if not matched_tags:
+                    continue
+
+                other_user_name = node.user.name if node.user else f"Пользователь #{candidate_user_id}"
+
+                reason = "Похожие интересы"
+                if cat_type == 'work' and my_profile and other_profile:
+                    if abs(my_vec[2] - other_profile.extraversion) > 0.4:
+                        reason = "Дополняет вашу команду"
+
+                matches.append({
+                    "user_id": candidate_user_id,
+                    "user_name": other_user_name,
+                    "compatibility": round(final_score * 100, 1),
+                    "match_reason": reason,
+                    "matched_tags": matched_tags,  # ✅ ТОЛЬКО совпавшие теги
+                    "score_breakdown": {
+                        "big_five": score_dict.get("big_five_score"),
+                        "graph_interest": score_dict.get("graph_interest_score"),
+                        "schwartz": score_dict.get("schwartz_score"),
+                        "behavioral": score_dict.get("behavioral_score"),
+                    },
+                })
+
+            # ✅ Одна сортировка + топ-10
+            matches.sort(key=lambda x: x['compatibility'], reverse=True)
+            top_matches = matches[:10]
+
+            return jsonify(top_matches)
+
 
 
 @profile_bp.route("/api/graph/report/<int:target_user_id>")
