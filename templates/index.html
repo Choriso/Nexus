@@ -323,8 +323,8 @@
     <div class="modal-box">
         <h2 id="modalTitle">Новый интерес</h2>
         <div class="modal-body">
-            <input  type="text" id="nodeTitle"       class="ui-input" placeholder="Название"
-                    style="width:100%; box-sizing:border-box;">
+            <input type="text" id="nodeTitle" class="ui-input" placeholder="Название"
+                   style="width:100%; box-sizing:border-box;">
 
             <textarea id="nodeDescription" class="ui-input" placeholder="Описание"
                       style="width:100%; box-sizing:border-box; resize:none; overflow:hidden; min-height:80px;"
@@ -337,7 +337,8 @@
             </select>
 
             <div class="modal-actions">
-                <button onclick="window.saveNode()"  class="btn-primary" style="flex:2; white-space:nowrap;">Сохранить</button>
+                <button onclick="window.saveNode()" class="btn-primary" style="flex:2; white-space:nowrap;">Сохранить
+                </button>
                 <button id="deleteBtn" onclick="window.deleteNode()" class="btn-primary"
                         style="background:#e53935; border-color:#b71c1c; flex:1; white-space:nowrap; display:none;">
                     Удалить
@@ -556,7 +557,9 @@
                                 <div class="match-score">${m.compatibility}%</div>
                                 <div class="match-info">
                                     <div class="match-name">${_esc(m.user_name)}</div>
-                                    <div class="match-node">Узел: ${_esc(m.node_title)}</div>
+                                    ${(m.matched_tags && m.matched_tags.length > 0)
+                                        ? `<div class="match-node">Совпадает: ${_esc(m.matched_tags[0])}</div>`
+                                        : ''}
                                 </div>
                                 <button class="btn-primary" onclick="location.href='/viewProfile?user_id=${m.user_id}'">Профиль</button>
                             </div>

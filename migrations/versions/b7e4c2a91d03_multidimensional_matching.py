@@ -8,7 +8,7 @@ Create Date: 2026-07-05 17:20:00.000000
 from alembic import op
 import sqlalchemy as sa
 
-# revision identifiers, used by Alembic.
+
 revision = "b7e4c2a91d03"
 down_revision = "0acf81f89c90"
 branch_labels = None
@@ -16,7 +16,6 @@ depends_on = None
 
 
 def upgrade():
-    # 1. Создаем таблицу узлов иерархии интересов
     op.create_table(
         "interest_hierarchy_nodes",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -33,13 +32,13 @@ def upgrade():
     )
     op.create_index("ix_interest_hierarchy_nodes_slug", "interest_hierarchy_nodes", ["slug"])
 
-    # 2. Создаем таблицу накопленных весов пользователей
     op.create_table(
         "user_interest_graph_weights",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("node_id", sa.Integer(), nullable=False),
         sa.Column("weight", sa.Float(), nullable=True),
+        sa.Column("source_tag", sa.String(length=200), nullable=True),
         sa.Column("updated_at", sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(["node_id"], ["interest_hierarchy_nodes.id"]),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
@@ -48,7 +47,6 @@ def upgrade():
     )
     op.create_index("ix_user_interest_graph_weights_user_id", "user_interest_graph_weights", ["user_id"])
 
-    # 3. Создаем таблицу поведенческих профилей
     op.create_table(
         "user_behavior_profiles",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -64,7 +62,6 @@ def upgrade():
         sa.UniqueConstraint("user_id"),
     )
 
-    # 4. Создаем таблицу профилей ценностей Шварца
     op.create_table(
         "user_schwartz_profiles",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -87,7 +84,6 @@ def upgrade():
         sa.UniqueConstraint("user_id"),
     )
 
-    # 5. Добавляем метаданные в существующую таблицу сообщений
     op.add_column("messages", sa.Column("char_count", sa.Integer(), nullable=True))
     op.add_column("messages", sa.Column("reply_time", sa.Float(), nullable=True))
     op.add_column("messages", sa.Column("emoji_count", sa.Integer(), nullable=True))
@@ -99,7 +95,7 @@ def downgrade():
     op.drop_column("messages", "char_count")
     op.drop_table("user_schwartz_profiles")
     op.drop_table("user_behavior_profiles")
-    op.drop_index("ix_user_interest_graph_weights_user_id", table_name="user_interest_graph_weights")
+    op.drop_index("ix_user_interest_graph_weights_user_id", "user_interest_graph_weights")
     op.drop_table("user_interest_graph_weights")
-    op.drop_index("ix_interest_hierarchy_nodes_slug", table_name="interest_hierarchy_nodes")
+    op.drop_index("ix_interest_hierarchy_nodes_slug", "interest_hierarchy_nodes")
     op.drop_table("interest_hierarchy_nodes")

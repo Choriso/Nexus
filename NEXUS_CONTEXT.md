@@ -91,15 +91,24 @@ Nexus/
 │   │   ├── models.py                # ConversationAnalysis, TrainingMetrics
 │   │   └── profiler_singleton.py    # Re-export get_profiler()
 │   └── ai_profiler/
-│       ├── core.py           # ★ AIProfiler, PersonalityClassifier, MBTIClassifier
-│       ├── text_utils.py     # clean_user_text() — единая очистка текста
-│       └── __init__.py       # get_profiler() — thread-safe singleton
+│       ├── core.py                  # ★ AIProfiler, PersonalityClassifier, MBTIClassifier
+│       ├── text_utils.py            # clean_user_text() — единая очистка текста
+│       ├── contextual_adapter.py    # ContextualAdapter — enrichment, SBERT wrapper (app/ai_profiler/contextual_adapter.py)
+│       ├── interest_graph.py       # Interest graph: resolve_tag_to_slug, build_query_weights, calculate_graph_interest_score
+│       ├── interest_extractor.py   # CustomInterestClassifier, Neural/ZeroShot extractors, label builders
+│       ├── semantic_ontology.py    # SEMANTIC_ONTOLOGY, FINETUNE_POSITIVE_PAIRS — canonical aliases for tag->slug
+│       ├── taxonomy.py             # INTEREST_TAXONOMY — anchors for zero-shot extractor
+│       ├── schwartz_analyzer.py    # (optional) value/schwartz scoring module
+│       ├── behavior_analyzer.py    # (optional) behavior -> compatibility signals
+│       └── __init__.py            # get_profiler() — thread-safe singleton
 ├── data/                   # SQLAlchemy ORM-модели (единый слой данных)
 │   ├── session.py          # SqlAlchemyBase, global_init(), create_session()
 │   ├── __all_models.py     # Импорт всех моделей для Alembic/metadata
 │   ├── user.py, chat.py, message.py, interest.py, …
-│   ├── ai.py               # ★ UserPersonalityProfile, AIExtractedInterests, UserCompatibility
-│   └── knowledge_graph.py  # KnowledgeNode, KnowledgeConnection
+│   ├── ai.py                    # ★ UserPersonalityProfile, AIExtractedInterests, UserCompatibility
+│   ├── interest_hierarchy.py    # InterestHierarchyNode, UserInterestGraphWeight — граф интересов и per-user weights
+│   ├── behavior.py              # UserBehaviorProfile — агрегаты поведения (если есть)
+│   └── knowledge_graph.py       # KnowledgeNode, KnowledgeConnection
 ├── ml/                     # Обучение моделей
 │   ├── train_ocean.py      # Обучение PersonalityClassifier
 │   ├── train_mbti.py       # Обучение MBTIClassifier
@@ -247,6 +256,12 @@ analyze_user_profile.delay(user_id)     ← Celery + Redis
 │  7. COMMIT                                                 │
 │  8. update_compatibility.delay(user_id)                    │
 └────────────────────────────────────────────────────────────┘
+
+
+# Интеграционные заметки (кратко):
+- ContextualAdapter (app/ai_profiler/contextual_adapter.py) инициализируется в AIProfiler и отдаёт sbert_model + методы enrich_text/prepare_for_encoding; используется для обогащения поисковых запросов и подготовки якорей для ZeroShotInterestExtractor.
+- matching_engine (app/ai/matching_engine.py) собирает компоненты совместимости: graph_score (вызывая app.ai_profiler.interest_graph.calculate_graph_interest_score), schwartz и поведение; profile.py endpoints используют calculate_multidimensional_compatibility/graph scoring и дополняют pgvector-результатами.
+- register_user_tags() вызывается в profile.py перед матчингом для регистрации/записи query-тегов в UserInterestGraphWeight, чтобы обеспечить наличие per-user weights для скоринга.
          │
          ▼
 ┌────────────────────────────────────────────────────────────┐
@@ -686,6 +701,13 @@ NEXUS_MBTI_NEURAL_BLEND_WEIGHT=0.7
 | Унифицировать compatibility | Заменить Python-расчёт в `profile.py`/`interests.py` на чтение из `ai_user_compatibility` |
 | Улучшить extract_interests | `AIProfiler.extract_interests()` или LLM-API (`ANTHROPIC_API_KEY` в config) |
 | Новый blueprint | `app/__init__.py` → `register_blueprint` |
+
+
+### Выявленные архитектурные проблемы (кратко)
+- resolve_tag_to_slug хрупок к опечаткам и синонимам; требует fuzzy/semantic fallback (app/ai_profiler/interest_graph.py).
+- Рассинхронизация SEMANTIC_ONTOLOGY и _HIERARCHY_SEED: канонические слаги не совпадают (app/ai_profiler/semantic_ontology.py, interest_graph.py).
+- graph_score часто = 0 для пользователей без precomputed weights; register_user_tags/seed не покрывают всех (app/ai_profiler/interest_graph.py, tools/seed_db.py).
+- Двойная система совместимости (pgvector в БД vs Python-SBERT в endpoints) приводит к расхождению результатов (app/ai/personality_analyzer.py, app/profile.py).
 
 ---
 

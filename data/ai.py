@@ -93,8 +93,33 @@ class UserSchwartzProfile(SqlAlchemyBase):
     def to_vector(self) -> list[float]:
         return [getattr(self, key) or 0.5 for key in self.SCHWARTZ_KEYS]
 
+
     def is_populated(self, min_confidence: float = 0.1) -> bool:
         return (self.confidence_score or 0.0) >= min_confidence
+
+
+class DynamicAlias(SqlAlchemyBase):
+    """
+    Cache for dynamically resolved tag aliases.
+    
+    When a raw tag (e.g., "cs2", "я люблю музыку") is enriched and mapped to a
+    hierarchy slug, the mapping is cached here for subsequent requests.
+    
+    Tag enrichment happens during WRITE phase (Celery), this table is READ-only during search.
+    """
+    
+    __tablename__ = "dynamic_aliases"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    raw_tag = Column(String(500), nullable=False, unique=True, index=True)
+    slug = Column(String(200), nullable=False, index=True)
+    tag_hash = Column(String(32), nullable=True, index=True)  # MD5 hash for quick collision detection
+    confidence = Column(Float, default=0.9)  # Confidence of resolution (0..1)
+    enriched_context = Column(Text, nullable=True)  # Cached enrichment result
+    source = Column(String(50), nullable=True)  # "ollama", "duckduckgo", "direct", etc.
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    access_count = Column(Integer, default=0)  # Track popularity
 
 
 class UserCompatibility(SqlAlchemyBase):
@@ -111,3 +136,4 @@ class UserCompatibility(SqlAlchemyBase):
     interest_overlap = Column(Float, default=0.0)
     recommendations = Column(JSON, nullable=True)
     calculated_at = Column(DateTime, default=datetime.utcnow)
+

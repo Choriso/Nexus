@@ -6,6 +6,7 @@ from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Uni
 from sqlalchemy.orm import relationship
 
 from .session import SqlAlchemyBase
+from pgvector.sqlalchemy import Vector
 
 
 class InterestHierarchyNode(SqlAlchemyBase):
@@ -26,6 +27,7 @@ class InterestHierarchyNode(SqlAlchemyBase):
     depth = Column(Integer, default=0)
     match_weight = Column(Float, default=1.0)
     global_category = Column(String(50), nullable=True)
+    embedding = Column(Vector(384), nullable=True)
 
     parent = relationship("InterestHierarchyNode", remote_side=[id], backref="children")
     user_weights = relationship("UserInterestGraphWeight", back_populates="node")

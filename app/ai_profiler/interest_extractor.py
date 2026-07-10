@@ -175,8 +175,10 @@ class CustomInterestClassifier(nn.Module):
 
         # SBERT не дообучается — эмбеддинги считаются один раз, градиент через
         # них не пробрасывается (no_grad), обучается только self.net поверх них.
-        with torch.no_grad():
+        with torch.inference_mode(False):  # явно отключаем inference mode
             embeddings = self.bert_model.encode(texts, convert_to_tensor=True)
+        # клонируем, чтобы гарантированно работать с обычным тензором
+        embeddings = embeddings.clone()
         label_tensor = torch.tensor(labels, dtype=torch.long)
 
         for epoch in range(epochs):

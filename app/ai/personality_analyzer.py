@@ -6,7 +6,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy import text
 from app.ai_profiler import get_profiler
 from app.ai_profiler.behavior_analyzer import refresh_user_behavior_profile
-from app.ai_profiler.interest_graph import register_user_tags
+from app.ai_profiler.interest_graph import register_user_tags, refresh_all_node_embeddings
 from app.ai_profiler.schwartz_analyzer import (
     analyze_schwartz_values,
     extract_onboarding_text,
@@ -162,8 +162,24 @@ def analyze_user_profile(self, user_id: int, force: bool = True) -> dict:
                     tag_list.append(str(item["subcategory"]))
                 elif isinstance(item, str):
                     tag_list.append(item)
+        
+        # WRITE PHASE: Resolve all tags through dynamic enrichment
         if tag_list:
-            register_user_tags(db, user_id, tag_list)
+            from app.ai_profiler.dynamic_enrichment import get_tag_enricher
+            enricher = get_tag_enricher()
+            
+            resolved_slugs = []
+            for raw_tag in tag_list:
+                slug = enricher.resolve_tag_to_slug(db, raw_tag, fallback_to_enrichment=True)
+                if slug:
+                    resolved_slugs.append(slug)
+                    logger.debug(f"[analyze_profile] Resolved '{raw_tag}' -> '{slug}'")
+                else:
+                    logger.warning(f"[analyze_profile] Could not resolve '{raw_tag}'")
+            
+            # Register only successfully resolved slugs
+            if resolved_slugs:
+                register_user_tags(db, user_id, resolved_slugs)
 
         refresh_user_behavior_profile(db, user_id)
 
@@ -215,6 +231,28 @@ def analyze_schwartz_values_task(self, user_id: int) -> dict:
         return {"status": "success", "user_id": user_id}
     except Exception as exc:
         logger.exception("Schwartz analysis failed for user_id=%s", user_id)
+        db.rollback()
+        return {"error": str(exc)}
+
+
+@celery.task(base=DBTask, name="ai.refresh_interest_embeddings", bind=True)
+def refresh_interest_embeddings(self) -> dict:
+    """
+    Полный пересчёт SBERT-эмбеддингов всех узлов графа интересов
+    (InterestHierarchyNode.embedding, pgvector). Нужен после смены SBERT-модели
+    или массового обновления _HIERARCHY_SEED / SEMANTIC_ONTOLOGY — то есть
+    редкая административная операция, а не часть пользовательского пайплайна.
+    Резолвинг тегов пользователей (register_user_tags / resolve_tags_batch)
+    продолжает работать во время пересчёта — просто до его завершения
+    новые/изменённые узлы временно матчатся хуже.
+    """
+    db = self.db
+    try:
+        updated = refresh_all_node_embeddings(db)
+        logger.info("Refreshed embeddings for %s interest graph nodes", updated)
+        return {"status": "success", "nodes_reset": updated}
+    except Exception as exc:
+        logger.exception("Error refreshing interest graph embeddings")
         db.rollback()
         return {"error": str(exc)}
 

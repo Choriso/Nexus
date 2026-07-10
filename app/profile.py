@@ -502,239 +502,240 @@ def _ocean_vector(profile: UserPersonalityProfile | None) -> list[float] | None:
     ]
 
 
+def _get_related_node_ids(db_sess, target_node_id: int) -> list[int]:
+    """
+    Get target node ID plus all its parent and child node IDs.
+    
+    This determines the scope of the search: direct match + related hierarchy.
+    
+    Returns: list of InterestHierarchyNode IDs
+    """
+    from data.interest_hierarchy import InterestHierarchyNode
+    
+    related_ids = {target_node_id}
+    
+    # Get target node
+    target = db_sess.query(InterestHierarchyNode).filter_by(id=target_node_id).first()
+    if not target:
+        return list(related_ids)
+    
+    # Add all parent nodes
+    current = target
+    while current.parent_id:
+        related_ids.add(current.parent_id)
+        current = db_sess.query(InterestHierarchyNode).filter_by(id=current.parent_id).first()
+        if not current:
+            break
+    
+    # Add all child nodes (recursive)
+    def _add_children(node_id: int):
+        children = db_sess.query(InterestHierarchyNode).filter_by(parent_id=node_id).all()
+        for child in children:
+            related_ids.add(child.id)
+            _add_children(child.id)
+    
+    _add_children(target_node_id)
+    
+    return list(related_ids)
+
+
+def _build_hierarchy_cache(db_sess) -> dict:
+    """
+    Pre-load entire interest hierarchy into memory for O(1) lookups during scoring.
+    
+    Returns: {node_id: {
+        'slug': str,
+        'depth': int,
+        'parent_id': int | None,
+        'match_weight': float,
+        'name': str
+    }, ...}
+    
+    This cache eliminates all DB lookups in the scoring loop.
+    """
+    from data.interest_hierarchy import InterestHierarchyNode
+    
+    cache = {}
+    all_nodes = db_sess.query(InterestHierarchyNode).all()
+    
+    for node in all_nodes:
+        cache[node.id] = {
+            'slug': node.slug,
+            'depth': node.depth,
+            'parent_id': node.parent_id,
+            'match_weight': node.match_weight or 1.0,
+            'name': node.name,
+        }
+    
+    logger.debug(f"[_build_hierarchy_cache] Cached {len(cache)} nodes")
+    return cache
+
+
+def _calculate_graph_interest_score(
+    target_node,
+    matched_weights_dict: dict,
+    hierarchy_cache: dict,
+) -> tuple[float, list[str]]:
+    """
+    Calculate graph interest score with direct/indirect distinction.
+    
+    Direct Match: User's slug exactly matches target_node.slug → coeff = 1.0
+    Indirect Match: User's slug is parent/child of target_node → coeff = 0.4 (with depth penalty)
+    
+    Args:
+        target_node: InterestHierarchyNode instance
+        matched_weights_dict: {node_id: weight, ...} - matched nodes for this user
+        hierarchy_cache: pre-loaded hierarchy dict
+    
+    Returns: (score, matched_tags_list)
+        - score: float (0..1)
+        - matched_tags_list: list of matched tag slugs to display
+    """
+    if not matched_weights_dict:
+        return 0.0, []
+    
+    score = 0.0
+    matched_tags = []
+    
+    for matched_node_id, weight in matched_weights_dict.items():
+        if matched_node_id not in hierarchy_cache:
+            continue
+        
+        matched_node_data = hierarchy_cache[matched_node_id]
+        matched_slug = matched_node_data['slug']
+        
+        # Determine match type (direct vs indirect)
+        if matched_node_id == target_node.id:
+            # Direct match: exact node ID
+            coeff = 1.0
+            score += weight * coeff
+            matched_tags.append(f"{matched_slug} (точное)")
+        else:
+            # Indirect match: parent or child relationship
+            # Depth penalty: the further apart in hierarchy, the less relevant
+            depth_diff = abs(matched_node_data['depth'] - target_node.depth)
+            indirect_coeff = max(0.4 - (0.05 * depth_diff), 0.1)  # Min 0.1, decay with depth
+            
+            score += weight * indirect_coeff
+            matched_tags.append(f"{matched_slug} (похоже)")
+    
+    # Normalize score to 0..1 range
+    final_score = min(score, 1.0)
+    
+    return final_score, matched_tags
+
+
 @profile_bp.route("/api/graph/match/<int:node_id>")
 @login_required
-def match_by_node(node_id):
+def match_by_node(node_id: int):
     """
-    Поиск наиболее подходящих пользователей по выбранному узлу графа.
-    Исправлено: теперь гарантированно используется calculate_hybrid_matching_score
-    и жесткие теги имеют приоритет над характером.
+    Search for the best matching users by graph node (clean architecture).
+    
+    NEW ARCHITECTURE (Write/Read Separation):
+    - WRITE phase (Celery): All user tags are pre-resolved to slugs and stored in user_interest_graph_weights
+    - READ phase (this function): Single SQL query + ultra-fast scoring loop
+    
+    Flow:
+    1. Get target_node from hierarchy (node_id maps to InterestHierarchyNode.id)
+    2. Execute ONE SQL query to fetch all candidates with matching weights
+    3. Pre-load hierarchy cache (slug, depth, parent_id) for scoring
+    4. Loop through candidates, calculate graph_score with direct/indirect distinction
+    5. Return top-10 with non-empty matched_tags
+    
+    Performance: Single SQL query, no N+1 issues, no SBERT calls in read phase.
     """
+    from data.interest_hierarchy import InterestHierarchyNode, UserInterestGraphWeight
+    from data.user import User as DBUser
+    
     with get_db_session() as db_sess:
-        current_user_obj = db_sess.query(User).get(current_user.id)
-        raw_cat = request.args.get('category', 'psychology').lower().strip()
-        cat_mapping = {
-            'работа': 'work', 'work': 'work',
-            'хобби': 'hobby', 'hobby': 'hobby',
-            'психология': 'psychology', 'psychology': 'psychology'
-        }
-        cat_type = cat_mapping.get(raw_cat, 'psychology')
-        config_data = CATEGORY_CONFIG.get(cat_type, CATEGORY_CONFIG['psychology'])
-
-        from app.ai_profiler import get_profiler
-        from data.ai import AIExtractedInterests, UserCompatibility
-
-        profiler = get_profiler()
-        contextual_adapter = get_contextual_adapter(
-            enabled=getattr(config, "CONTEXTUAL_ADAPTER_ENABLED", True)
-        )
-
-        with get_db_session() as db_sess:
-            target_node = db_sess.query(KnowledgeNode).get(node_id)
-            if not target_node:
-                return jsonify({"error": "Node not found"}), 404
-
-            # Поисковый запрос из узла → обогащение через ContextualAdapter
-            raw_search_query = f"{target_node.title}. {target_node.description or ''}".strip()
-            search_query = contextual_adapter.enrich_text(raw_search_query).enriched
-
-            # Получаем узлы других пользователей
-            candidates = db_sess.query(KnowledgeNode).options(
-                joinedload(KnowledgeNode.user)
-            ).filter(
-                KnowledgeNode.user_id != current_user.id
-            ).all()
-
-            if not candidates:
-                return jsonify([])
-
-            user_ids = {node.user_id for node in candidates}
-
-            # БАТЧ-ЗАПРОСЫ (Защита от N+1)
-            profiles = db_sess.query(UserPersonalityProfile).filter(
-                UserPersonalityProfile.user_id.in_(user_ids)
-            ).all()
-            profile_map = {p.user_id: p for p in profiles}
-
-            extracted_rows = db_sess.query(AIExtractedInterests).filter(
-                AIExtractedInterests.user_id.in_(user_ids)
-            ).all()
-
-            extracted_map = {}
-            for row in extracted_rows:
-                extracted_map[row.user_id] = {
-                    "hobbies": row.hobbies or [],
-                    "topics": row.topics or [],
-                    "skills": row.skills or [],
-                    "occupation": row.occupation,
-                    "semantic_categories": getattr(row, "semantic_categories", None) or {},
-                    "extraction_method": getattr(row, "extraction_method", None),
+        # Step 1: Get target hierarchy node
+        target_node = db_sess.query(InterestHierarchyNode).filter_by(id=node_id).first()
+        if not target_node:
+            logger.warning(f"[match_by_node] Node {node_id} not found in hierarchy")
+            return jsonify({"error": "Node not found"}), 404
+        
+        logger.debug(f"[match_by_node] Target node: {target_node.slug} (id={node_id}, depth={target_node.depth})")
+        
+        # Step 2: SINGLE SQL query - fetch all candidates with graph weights for target node or its parents/children
+        #
+        # Query finds users who have:
+        # - Direct match: target_node.id
+        # - Parent match: any parent of target_node
+        # - Child match: any child of target_node
+        
+        from sqlalchemy import or_, text
+        
+        # Get target node's ancestor and descendant IDs
+        target_and_related_ids = _get_related_node_ids(db_sess, node_id)
+        
+        candidates_query = db_sess.query(
+            UserInterestGraphWeight.user_id,
+            DBUser.id,
+            DBUser.name,
+            UserInterestGraphWeight.node_id,
+            UserInterestGraphWeight.weight,
+        ).join(
+            DBUser, UserInterestGraphWeight.user_id == DBUser.id
+        ).filter(
+            UserInterestGraphWeight.user_id != current_user.id,
+            UserInterestGraphWeight.node_id.in_(target_and_related_ids),
+            UserInterestGraphWeight.weight > 0.0,
+        ).all()
+        
+        if not candidates_query:
+            logger.debug("[match_by_node] No candidates with graph weights found")
+            return jsonify([])
+        
+        # Step 3: Pre-load entire hierarchy as cache for O(1) lookups
+        hierarchy_cache = _build_hierarchy_cache(db_sess)
+        
+        # Group candidates by user_id for aggregate scoring
+        candidates_by_user = {}
+        for row in candidates_query:
+            user_id, db_user_id, user_name, node_id_match, weight = row
+            if user_id not in candidates_by_user:
+                candidates_by_user[user_id] = {
+                    "name": user_name,
+                    "matched_weights": {},  # node_id -> weight
                 }
-
-            compat_rows = db_sess.query(UserCompatibility).filter(
-                ((UserCompatibility.user_id_1 == current_user.id) & (UserCompatibility.user_id_2.in_(user_ids))) |
-                ((UserCompatibility.user_id_2 == current_user.id) & (UserCompatibility.user_id_1.in_(user_ids)))
-            ).all()
-
-            compat_map = {}
-            for row in compat_rows:
-                other_id = row.user_id_2 if row.user_id_1 == current_user.id else row.user_id_1
-                compat_map[other_id] = row.overall_score
-
-            my_profile = db_sess.query(UserPersonalityProfile).filter_by(user_id=current_user.id).first()
-            my_vec = [0.0] * 5
-            if my_profile:
-                my_vec = [
-                    my_profile.openness, my_profile.conscientiousness, my_profile.extraversion,
-                    my_profile.agreeableness, my_profile.neuroticism
-                ]
-
-            schwartz_rows = db_sess.query(UserSchwartzProfile).filter(
-                UserSchwartzProfile.user_id.in_(user_ids | {current_user.id})
-            ).all()
-            schwartz_map = {row.user_id: row for row in schwartz_rows}
-            my_schwartz = schwartz_map.get(current_user.id)
-
-            behavior_rows = db_sess.query(UserBehaviorProfile).filter(
-                UserBehaviorProfile.user_id.in_(user_ids | {current_user.id})
-            ).all()
-            behavior_map = {row.user_id: row for row in behavior_rows}
-            my_behavior = behavior_map.get(current_user.id)
-
-            from data.interest_hierarchy import InterestHierarchyNode, UserInterestGraphWeight
-            from app.ai_profiler.interest_graph import register_user_tags, build_query_weights, resolve_node_title_to_tags
-
-            # ✅ ИСПРАВЛЕНО: Используем resolve_node_title_to_tags для правильного резолвинга
-            # описательных названий узлов (например, "я люблю музыку" → "music_audio")
-            query_tags = resolve_node_title_to_tags(
-                db_sess,
-                node_title=target_node.title,
-                node_description=target_node.description or "",
-                profiler=profiler
+            candidates_by_user[user_id]["matched_weights"][node_id_match] = weight
+        
+        logger.debug(f"[match_by_node] Found {len(candidates_by_user)} unique candidates")
+        
+        # Step 4: Calculate scores for each candidate (no DB hits)
+        matches = []
+        for candidate_user_id, candidate_data in candidates_by_user.items():
+            candidate_name = candidate_data["name"]
+            matched_weights_dict = candidate_data["matched_weights"]
+            
+            # Calculate graph score with direct/indirect distinction
+            graph_score, matched_tags = _calculate_graph_interest_score(
+                target_node=target_node,
+                matched_weights_dict=matched_weights_dict,
+                hierarchy_cache=hierarchy_cache,
             )
             
-            # Если всё ещё ничего не резолвилось, значит узел не в иерархии — пропускаем
-            if not query_tags:
-                logger.warning(
-                    f"[match_by_node] Could not resolve node title '{target_node.title}' "
-                    f"to any slug in hierarchy. Aborting search."
-                )
-                return jsonify([])
-
-            # Register query tags once before loop
-            if query_tags:
-                register_user_tags(db_sess, current_user.id, list(query_tags))
-
-            # Preload hierarchy node names
-            hierarchy_nodes = db_sess.query(InterestHierarchyNode).all()
-            hierarchy_node_names = {n.id: n.name for n in hierarchy_nodes}
-
-            # Preload graph weights for candidates and current user
-            graph_weights_rows = db_sess.query(UserInterestGraphWeight).filter(
-                UserInterestGraphWeight.user_id.in_(user_ids | {current_user.id})
-            ).all()
-            graph_weights_map = {}
-            for row in graph_weights_rows:
-                graph_weights_map.setdefault(row.user_id, {})[row.node_id] = row.weight
-
-            # Принудительная регистрация тегов для ВСЕХ кандидатов
-            for c_id in user_ids:
-                if c_id in extracted_map:
-                    other_tag_set = profiler._extract_tag_set(extracted_map[c_id])
-                    if other_tag_set:
-                        register_user_tags(db_sess, c_id, list(other_tag_set))
-
-            # Перезагружаем веса после регистрации
-            graph_weights_rows = db_sess.query(UserInterestGraphWeight).filter(
-                UserInterestGraphWeight.user_id.in_(user_ids | {current_user.id})
-            ).all()
-            graph_weights_map = {}
-            for row in graph_weights_rows:
-                graph_weights_map.setdefault(row.user_id, {})[row.node_id] = row.weight
-
-            # Pre-build query weights once
-            query_graph_weights = build_query_weights(db_sess, query_tags)
-
-            matches = []
-            for node in candidates:
-                candidate_user_id = node.user_id
-                if not candidate_user_id:
-                    continue
-
-                other_profile = profile_map.get(candidate_user_id)
-                other_extracted = extracted_map.get(candidate_user_id)
-
-                # Big Five / OCEAN
-                ocean_score_val = compat_map.get(candidate_user_id)
-                if ocean_score_val is not None:
-                    ocean_score_normalized = (
-                        float(ocean_score_val)
-                        if float(ocean_score_val) <= 1.0
-                        else float(ocean_score_val) / 100.0
-                    )
-                elif my_profile and other_profile:
-                    other_vec = [
-                        other_profile.openness, other_profile.conscientiousness, other_profile.extraversion,
-                        other_profile.agreeableness, other_profile.neuroticism
-                    ]
-                    processed_other_vec = other_vec[:]
-                    for c_idx in config_data['complementary']:
-                        processed_other_vec[c_idx] = 1.0 - other_vec[c_idx]
-
-                    ocean_score_normalized = profiler.calculate_compatibility(
-                        my_vec, processed_other_vec, weights=config_data['weights']
-                    ) / 100.0
-                else:
-                    ocean_score_normalized = 0.5
-
-                score_dict = calculate_multidimensional_compatibility(
-                    db_sess,
-                    ocean_score_normalized=ocean_score_normalized,
-                    query_tags=query_tags,
-                    current_user_id=current_user.id,
-                    other_user_id=candidate_user_id,
-                    other_extracted=other_extracted,
-                    my_schwartz=my_schwartz,
-                    other_schwartz=schwartz_map.get(candidate_user_id),
-                    my_behavior=my_behavior,
-                    other_behavior=behavior_map.get(candidate_user_id),
-                    query_graph_weights=query_graph_weights,
-                    other_graph_weights=graph_weights_map.get(candidate_user_id, {}),
-                    hierarchy_node_names=hierarchy_node_names,
-                )
-                final_score = score_dict.get("final_score", 0.0)
-                matched_tags = score_dict.get("matched_tags", [])
-
-                # ⚠️ ПРОПУСКАЕМ пользователей БЕЗ совпадений по тегам
-                if not matched_tags:
-                    continue
-
-                other_user_name = node.user.name if node.user else f"Пользователь #{candidate_user_id}"
-
-                reason = "Похожие интересы"
-                if cat_type == 'work' and my_profile and other_profile:
-                    if abs(my_vec[2] - other_profile.extraversion) > 0.4:
-                        reason = "Дополняет вашу команду"
-
-                matches.append({
-                    "user_id": candidate_user_id,
-                    "user_name": other_user_name,
-                    "compatibility": round(final_score * 100, 1),
-                    "match_reason": reason,
-                    "matched_tags": matched_tags,  # ✅ ТОЛЬКО совпавшие теги
-                    "score_breakdown": {
-                        "big_five": score_dict.get("big_five_score"),
-                        "graph_interest": score_dict.get("graph_interest_score"),
-                        "schwartz": score_dict.get("schwartz_score"),
-                        "behavioral": score_dict.get("behavioral_score"),
-                    },
-                })
-
-            # ✅ Одна сортировка + топ-10
-            matches.sort(key=lambda x: x['compatibility'], reverse=True)
-            top_matches = matches[:10]
-
-            return jsonify(top_matches)
+            # Skip if no relevant tags matched
+            if not matched_tags or graph_score < 0.1:
+                continue
+            
+            matches.append({
+                "user_id": candidate_user_id,
+                "user_name": candidate_name,
+                "compatibility": round(graph_score * 100, 1),
+                "match_reason": "Общие интересы",
+                "matched_tags": matched_tags,
+                "score_breakdown": {
+                    "graph_interest": round(graph_score, 3),
+                },
+            })
+        
+        # Step 5: Sort and return top-10
+        matches.sort(key=lambda x: x["compatibility"], reverse=True)
+        top_matches = matches[:10]
+        
+        logger.info(f"[match_by_node] Returning {len(top_matches)} matches for node {node_id}")
+        return jsonify(top_matches)
 
 
 
