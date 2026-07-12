@@ -1,9 +1,13 @@
+import logging
+
 from flask import Flask
 
 from config import get_config
 from .extensions import login_manager, socketio, cors, migrate
 from data import session as db_session
 from data.user import User
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
 
 
 def create_app() -> Flask:

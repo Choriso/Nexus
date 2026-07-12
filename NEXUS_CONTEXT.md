@@ -1,6 +1,6 @@
-# Nexus — Project Architecture & AI Context
+# Nexus — Project Architecture & Technical Reference
 
-> **Назначение документа:** единый контекстный файл для LLM-ассистентов. После прочтения модель должна понимать архитектуру, потоки данных, схему БД и точки расширения без повторного обхода репозитория.
+> **Назначение:** Единый технический справочник платформы Nexus. Содержит описание архитектуры, схемы БД, потоков данных, конфигурации и всех AI-компонентов. Предназначен для разработчиков и LLM-ассистентов.
 
 ---
 
@@ -8,51 +8,44 @@
 
 ### 1.1. Суть проекта
 
-**Nexus** — социальная платформа, объединяющая три слоя интеллекта:
+**Nexus** — социальная платформа для поиска единомышленников на основе психологической совместимости и общих интересов. Три ключевых слоя:
 
 | Слой | Назначение |
 |------|------------|
-| **Психологический профиль** | Автоматический анализ личности (OCEAN / Big Five + MBTI) из текстовых сообщений пользователя |
-| **Граф знаний интересов** | Визуальный персональный граф (`knowledge_nodes`, `knowledge_connections`) + JSON-извлечённые интересы (`AIExtractedInterests`) |
-| **Векторная совместимость** | Поиск ближайших «психологических соседей» через pgvector (косинусное расстояние по 5-мерному OCEAN-вектору) |
-
-Пользователь общается в чатах → тексты накапливаются → Celery-воркер запускает ML-анализ → результаты сохраняются в PostgreSQL → совместимость пересчитывается на уровне СУБД → фронтенд показывает рекомендации, граф интересов и профиль.
+| **Психологический профиль** | Автоматический анализ личности: OCEAN (Big Five), MBTI, ценности Шварц, поведенческие метрики |
+| **Граф знаний интересов** | Визуальный граф узлов (`knowledge_nodes`) + иерархия интересов + AI-извлечённые интересы |
+| **Двухконтурный поиск** | Быстрый pgvector OCEAN-поиск + гибридный скоринг (Graph × OCEAN × Jaccard) с микро-градиентной подстройкой |
 
 ### 1.2. Технологический стек
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Клиент (HTML/JS templates + Socket.IO)                     │
-├─────────────────────────────────────────────────────────────┤
-│  Flask 3.x  │  Flask-Login  │  Flask-SocketIO  │  Flask-CORS│
-│  Blueprints: auth, profile, interests, chat, moderation,    │
+┌──────────────────────────────────────────────────────────────┐
+│  Клиент: HTML/JS шаблоны (Jinja2) + Chart.js + D3.js (граф)  │
+├──────────────────────────────────────────────────────────────┤
+│  Flask 3.x │ Flask-Login │ Flask-SocketIO │ Flask-CORS        │
+│  Blueprints: auth, profile, interests, chat, moderation,      │
 │              analytics, routes (main)                         │
-├─────────────────────────────────────────────────────────────┤
-│  Celery 5.x  ←→  Redis (broker + result backend)            │
-│  Задачи: ai.analyze_user_profile, ai.update_compatibility  │
-├─────────────────────────────────────────────────────────────┤
-│  PyTorch 2.x + SentenceTransformers + Transformers          │
-│  Модели: PersonalityClassifier (OCEAN), MBTIClassifier       │
-├─────────────────────────────────────────────────────────────┤
-│  SQLAlchemy 2.x  │  Alembic / Flask-Migrate                 │
-│  PostgreSQL 16 + pgvector 0.2.x  (Docker: pgvector/pgvector) │
-└─────────────────────────────────────────────────────────────┘
+├──────────────────────────────────────────────────────────────┤
+│  Celery 5.x ←→ Redis (broker + result backend)               │
+├──────────────────────────────────────────────────────────────┤
+│  PyTorch 2.x + SentenceTransformers + Transformers            │
+│  Модели: PersonalityClassifier (OCEAN), MBTIClassifier        │
+├──────────────────────────────────────────────────────────────┤
+│  YandexGPT (API) — генерация match-отчётов                   │
+│  Ollama (опционально) — fallback для LLM-запросов             │
+├──────────────────────────────────────────────────────────────┤
+│  SQLAlchemy 2.x │ Alembic / Flask-Migrate                     │
+│  PostgreSQL 16 + pgvector 0.2.x (Docker: pgvector/pgvector)  │
+│  Redis 7.x (кэш + брокер Celery)                             │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**Python:** 3.12+  
-**Точка входа:** `App.py` → `create_app()` из `app/__init__.py` → `socketio.run(app)`  
-**Конфигурация:** единый модуль `config.py` (корень проекта). Все env-переменные читаются только там; остальные модули импортируют `config` или `get_config()`.
-
-**Ключевые зависимости** (`docs/requirements.txt`):
-- `flask`, `flask-login`, `flask-socketio`, `flask-migrate`, `flask-cors`
-- `celery`, `redis`
-- `sqlalchemy`, `psycopg2-binary`, `pgvector`
-- `torch`, `sentence-transformers`, `transformers`
-- `scikit-learn`, `numpy`, `pandas`, `nltk`
+**Python:** 3.12+
+**Точка входа:** `App.py` → `create_app()` из `app/__init__.py` → `socketio.run(app)`
+**Конфигурация:** единый модуль `config.py` (корень проекта). Все env-переменные читаются только там; остальные модули импортируют `config`.
 
 **Инфраструктура (Docker):**
 ```yaml
-# docker-compose.yml
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -62,7 +55,7 @@ services:
       POSTGRES_DB: nexus_db
 ```
 
-**Redis** (не в compose, ожидается локально): broker Celery `redis://localhost:6379/0`, кэш `redis://localhost:6379/1`.
+**Redis** (ожидается локально): брокер `redis://localhost:6379/0`, кэш `redis://localhost:6379/1`.
 
 ---
 
@@ -72,71 +65,131 @@ services:
 
 ```
 Nexus/
-├── App.py                  # Точка входа WSGI / dev-сервер
-├── config.py               # Единая конфигурация (Config, DevelopmentConfig, …)
-├── app/                    # Flask-приложение
-│   ├── __init__.py         # create_app(), регистрация blueprints
-│   ├── extensions.py       # login_manager, socketio, cors, migrate
-│   ├── auth.py             # Регистрация / авторизация
-│   ├── profile.py          # Профиль, аватар, API графа знаний, matching
-│   ├── chat.py             # REST + Socket.IO чаты, триггер AI-анализа
-│   ├── interests.py        # Лента интересов, API matching по узлам графа
-│   ├── moderation.py       # Модерация, жалобы
-│   ├── analytics.py        # Дашборд модератора
-│   ├── db.py               # get_db_session() — context manager для сессий
-│   ├── ai/
-│   │   ├── personality_analyzer.py  # ★ Celery-задачи (ядро пайплайна)
-│   │   ├── celery_tasks.py          # Re-export задач
-│   │   ├── data_processor.py        # TF-IDF препроцессор (legacy/обучение)
-│   │   ├── models.py                # ConversationAnalysis, TrainingMetrics
-│   │   └── profiler_singleton.py    # Re-export get_profiler()
-│   └── ai_profiler/
-│       ├── core.py                  # ★ AIProfiler, PersonalityClassifier, MBTIClassifier
-│       ├── text_utils.py            # clean_user_text() — единая очистка текста
-│       ├── contextual_adapter.py    # ContextualAdapter — enrichment, SBERT wrapper (app/ai_profiler/contextual_adapter.py)
-│       ├── interest_graph.py       # Interest graph: resolve_tag_to_slug, build_query_weights, calculate_graph_interest_score
-│       ├── interest_extractor.py   # CustomInterestClassifier, Neural/ZeroShot extractors, label builders
-│       ├── semantic_ontology.py    # SEMANTIC_ONTOLOGY, FINETUNE_POSITIVE_PAIRS — canonical aliases for tag->slug
-│       ├── taxonomy.py             # INTEREST_TAXONOMY — anchors for zero-shot extractor
-│       ├── schwartz_analyzer.py    # (optional) value/schwartz scoring module
-│       ├── behavior_analyzer.py    # (optional) behavior -> compatibility signals
-│       └── __init__.py            # get_profiler() — thread-safe singleton
-├── data/                   # SQLAlchemy ORM-модели (единый слой данных)
-│   ├── session.py          # SqlAlchemyBase, global_init(), create_session()
-│   ├── __all_models.py     # Импорт всех моделей для Alembic/metadata
-│   ├── user.py, chat.py, message.py, interest.py, …
-│   ├── ai.py                    # ★ UserPersonalityProfile, AIExtractedInterests, UserCompatibility
-│   ├── interest_hierarchy.py    # InterestHierarchyNode, UserInterestGraphWeight — граф интересов и per-user weights
-│   ├── behavior.py              # UserBehaviorProfile — агрегаты поведения (если есть)
-│   └── knowledge_graph.py       # KnowledgeNode, KnowledgeConnection
-├── ml/                     # Обучение моделей
-│   ├── train_ocean.py      # Обучение PersonalityClassifier
-│   ├── train_mbti.py       # Обучение MBTIClassifier
-│   ├── preprocess.py       # Подготовка датасета, SBERT-эмбеддинги
-│   └── artifacts/          # *.pth веса, training_history.png
+├── App.py                          # Точка входа WSGI
+├── config.py                       # Единая конфигурация (Config, DevelopmentConfig, …)
+├── .env                            # env-переменные (не в Git)
+├── NEXUS_CONTEXT.md                # Этот файл
+│
+├── app/                            # Flask-приложение
+│   ├── __init__.py                 # create_app(), регистрация blueprints, logging
+│   ├── extensions.py               # login_manager, socketio, cors, migrate
+│   ├── auth.py                     # Регистрация / авторизация
+│   ├── profile.py                  # Профиль, аватар, API графа, matching, viewProfile
+│   ├── chat.py                     # REST + Socket.IO чаты, триггер AI-анализа
+│   ├── interests.py                # Лента интересов, matching по узлам графа
+│   ├── moderation.py               # Модерация, жалобы
+│   ├── analytics.py                # Дашборд модератора
+│   ├── db.py                       # get_db_session() — контекстный менеджер сессий
+│   ├── routes.py                   # Главная страница, редиректы
+│   │
+│   ├── ai/                         # AI-слой (Celery, LLM, matching)
+│   │   ├── match_report.py         # ★ Генерация AI-ревью совместимости (YandexGPT → Ollama → fallback)
+│   │   ├── personality_analyzer.py # ★ Celery-задачи (analyze_user_profile, update_compatibility)
+│   │   ├── celery_tasks.py         # Re-export задач для Celery worker
+│   │   ├── matching_engine.py      # Legacy matching (под вопросом)
+│   │   ├── ollama_service.py       # Сервис для Ollama API
+│   │   ├── models.py               # Legacy: ai_conversation_analysis, ai_training_metrics
+│   │   ├── data_processor.py       # TF-IDF препроцессор (legacy)
+│   │   └── profiler_singleton.py   # Re-export get_profiler()
+│   │
+│   └── ai_profiler/                # ★ Ядро AI-профилирования
+│       ├── __init__.py             # get_profiler() — thread-safe singleton
+│       ├── core.py                 # ★ AIProfiler, PersonalityClassifier, MBTIClassifier
+│       ├── text_utils.py           # clean_user_text() — очистка текста
+│       ├── contextual_adapter.py   # ContextualAdapter — SBERT-обогащение, taxonomy
+│       ├── providers.py            # ★ LLMProvider, FailoverCascade, YandexGPTProvider
+│       ├── dynamic_enrichment.py   # ★ DynamicTagEnricher — Two-Stage Semantic Routing
+│       ├── search_ranking.py       # ★ Multi-metric scoring, micro_gradient_step
+│       ├── root_personalities.py   # ★ Root archetypes (work/entertainment/life), scoring
+│       ├── interest_graph.py       # Граф интересов: resolve_tags, overlap, jaccard
+│       ├── interest_extractor.py   # CustomInterestClassifier, ZeroShot-экстрактор
+│       ├── schwartz_analyzer.py    # Анализ ценностей Шварц
+│       ├── behavior_analyzer.py    # Анализ поведенческих паттернов
+│       ├── semantic_ontology.py    # SEMANTIC_ONTOLOGY — канонические алиасы tag→slug
+│       ├── taxonomy.py             # INTEREST_TAXONOMY — якоря zero-shot
+│       └── constants.py            # Общие константы
+│
+├── data/                           # ★ SQLAlchemy ORM-модели (единый слой данных)
+│   ├── session.py                  # SqlAlchemyBase, global_init(), create_session()
+│   ├── __all_models.py             # Импорт всех моделей для Alembic
+│   ├── user.py                     # users + metric_weight_*_offset
+│   ├── ai.py                       # ★ UserPersonalityProfile, AIExtractedInterests,
+│   │                               #   UserSchwartzProfile, UserCompatibility,
+│   │                               #   DynamicAlias, GlobalWeightsConfig
+│   ├── behavior.py                 # UserBehaviorProfile
+│   ├── interest_hierarchy.py       # InterestHierarchyNode, UserInterestGraphWeight
+│   ├── knowledge_graph.py          # KnowledgeNode, KnowledgeConnection
+│   ├── interest.py                 # interests (социальная лента)
+│   ├── favorite_interest.py        # favorite_interests (M2M)
+│   ├── chat.py                     # chats
+│   ├── message.py                  # messages
+│   ├── chat_settings.py            # chat_settings
+│   └── report.py                   # reports (жалобы)
+│
+├── ml/                             # Обучение моделей
+│   ├── train_ocean.py              # Обучение PersonalityClassifier
+│   ├── train_mbti.py               # Обучение MBTIClassifier
+│   ├── preprocess.py               # Подготовка датасета, SBERT-эмбеддинги
+│   └── artifacts/                  # *.pth веса моделей
+│
 ├── tools/
-│   ├── seed_db.py          # ★ Наполнение БД + синхронный AI-анализ
-│   ├── watch_profile.py    # Отладка профилей
-│   └── chat.py             # CLI-утилита чата
-├── migrations/             # Alembic (в т.ч. pgvector)
-└── templates/, static/       # Frontend
+│   ├── seed_db.py                  # ★ Наполнение БД (200 users, archetypes, chats)
+│   └── test_node_match.py          # ★ Тестер графового matching
+│
+├── migrations/                     # Alembic (включая pgvector)
+├── templates/                      # Jinja2-шаблоны (14 файлов)
+│   ├── base.html                   # Базовый layout
+│   ├── index.html                  # ★ Главная: граф + сайдбар кандидатов + AI Toast
+│   ├── profile.html                # Свой профиль (OCEAN, Schwartz)
+│   ├── view_profile.html           # Чужой профиль (псих. карточка, интересы)
+│   ├── chat.html, login.html, …
+│   └── analytics.html, moderation.html
+│
+├── static/
+│   ├── src/layouts/base.css        # Основные стили
+│   ├── src/styles/variables.css    # ★ Все CSS-переменные (цвета, радиусы, тени)
+│   ├── src/components/             # button.css, card.css, input.css
+│   └── CSS/                        # Специфичные стили (чат, лента, …)
+│
+└── test_metrics.py                 # ★ 55 тестов метрик (graph, schwartz, root_personality, jaccard)
 ```
 
-### 2.2. ER-схема ключевых сущностей
+### 2.2. Полная ER-схема
 
 ```mermaid
 erDiagram
-    User ||--o{ Message : "author"
     User ||--o| UserPersonalityProfile : "has"
     User ||--o| AIExtractedInterests : "has"
-    User ||--o{ KnowledgeNode : "owns"
+    User ||--o| UserSchwartzProfile : "has"
+    User ||--o| UserBehaviorProfile : "has"
     User ||--o{ UserCompatibility : "user_id_1"
     User ||--o{ UserCompatibility : "user_id_2"
+    User ||--o{ KnowledgeNode : "owns"
+    User ||--o{ Interest : "creates"
+    User ||--o{ UserInterestGraphWeight : "weights"
+    User ||--o{ Message : "author"
+    User ||--o{ Chat : "participant"
     Chat ||--o{ Message : "contains"
-    User ||--o{ Chat : "user1_id"
-    User ||--o{ Chat : "user2_id"
+    Chat ||--o{ ChatSettings : "settings"
     KnowledgeNode ||--o{ KnowledgeConnection : "from_node"
     KnowledgeNode ||--o{ KnowledgeConnection : "to_node"
+    InterestHierarchyNode ||--o{ UserInterestGraphWeight : "has_weights"
+    InterestHierarchyNode ||--o{ InterestHierarchyNode : "parent"
+
+    User {
+        int id PK
+        string name
+        string email
+        string hashed_password
+        string information
+        string connection
+        string image_path
+        bool allow_location
+        bool is_moderator
+        float metric_weight_ocean_offset
+        float metric_weight_graph_offset
+        float metric_weight_jaccard_offset
+    }
 
     UserPersonalityProfile {
         int user_id PK_FK
@@ -146,9 +199,43 @@ erDiagram
         float agreeableness
         float neuroticism
         vector embedding "Vector(5)"
-        string mbti_type
+        string mbti_type "INTJ, ENFP, …"
+        string communication_style
+        float formality
+        float enthusiasm
+        float detail_oriented
+        string collaboration_style
         json traits
         json values
+        json compatible_mbti_types
+        float confidence_score
+        int conversation_count
+        datetime last_analyzed
+    }
+
+    UserSchwartzProfile {
+        int user_id PK_FK
+        float self_direction
+        float stimulation
+        float hedonism
+        float achievement
+        float power
+        float security
+        float conformity
+        float tradition
+        float benevolence
+        float universalism
+        json values_json
+        float confidence_score
+    }
+
+    UserBehaviorProfile {
+        int user_id PK_FK
+        float avg_char_count
+        float avg_reply_time
+        float avg_emoji_count
+        float avg_hour
+        int message_count
     }
 
     AIExtractedInterests {
@@ -156,562 +243,579 @@ erDiagram
         json hobbies
         json topics
         json skills
-        json preferences
+        json dislikes
+        string occupation
+        text work_style
         json short_term_goals
+        json long_term_goals
+        json preferences
     }
 
     UserCompatibility {
+        int id PK
         int user_id_1 FK
         int user_id_2 FK
         float overall_score
+        float romantic_score
+        float professional_score
+        float creative_score
+        float interest_overlap
         json recommendations
+    }
+
+    KnowledgeNode {
+        int id PK
+        int user_id FK
+        string title
+        string description
+        string category "work | hobby | psychology | want"
+        float x "позиция на графе"
+        float y "позиция на графе"
+    }
+
+    KnowledgeConnection {
+        int id PK
+        int from_node_id FK
+        int to_node_id FK
+        string label
+    }
+
+    InterestHierarchyNode {
+        int id PK
+        string name
+        string slug "уникальный идентификатор"
+        int parent_id FK
+        string path "materialized path: /1/5/12/"
+        int depth
+        float match_weight
+        string global_category
+        vector embedding "Vector(384)"
+    }
+
+    UserInterestGraphWeight {
+        int id PK
+        int user_id FK
+        int node_id FK
+        float weight
+        string source_tag
+    }
+
+    DynamicAlias {
+        int id PK
+        string raw_tag "исходный тег"
+        string slug "разрешенный слаг"
+        string tag_hash "MD5"
+        float confidence
+        text enriched_context
+        string source "ollama | direct | усечение"
+    }
+
+    GlobalWeightsConfig {
+        int id PK "always 1"
+        float weight_ocean
+        float weight_graph
+        float weight_jaccard
+        float learning_rate
     }
 ```
 
 ### 2.3. Модуль `data/` — ORM-слой
 
-**Принцип:** все таблицы описаны в `data/*.py`, наследуют `SqlAlchemyBase` из `data/session.py`. Импорт всех моделей — через `data/__all_models.py` (нужен для `create_all` и Alembic).
+Все таблицы описаны в `data/*.py`, наследуют `SqlAlchemyBase` из `data/session.py`.
 
 | Файл | Таблицы | Роль |
 |------|---------|------|
-| `user.py` | `users` | Аутентификация (UserMixin), связи с профилем, сообщениями, совместимостью |
-| `chat.py` | `chats` | Диалог 1:1 (`user1_id`, `user2_id`) |
-| `message.py` | `messages` | Текстовые/файловые сообщения; **источник данных для AI** |
-| `interest.py` | `interests` | Пользовательские публикации интересов (социальная лента) |
-| `knowledge_graph.py` | `knowledge_nodes`, `knowledge_connections` | Узлы и рёбра персонального графа (координаты x,y для UI) |
-| `ai.py` | `ai_user_personality_profiles`, `ai_extracted_interests`, `ai_user_compatibility` | **Ядро AI-данных** |
+| `user.py` | `users` | Аутентификация, смещения весов метрик для поиска |
+| `ai.py` | `ai_user_personality_profiles` | OCEAN + MBTI + embedding Vector(5) |
+| `ai.py` | `ai_extracted_interests` | JSON-интересы, цели, профессия |
+| `ai.py` | `user_schwartz_profiles` | 10 ценностей Шварц |
+| `ai.py` | `ai_user_compatibility` | Попарные оценки совместимости |
+| `ai.py` | `dynamic_aliases` | Кэш разрешения тегов → слаг |
+| `ai.py` | `global_weights_config` | Глобальные веса метрик (1 строка) |
+| `behavior.py` | `user_behavior_profiles` | Агрегаты стиля общения |
+| `knowledge_graph.py` | `knowledge_nodes` | Визуальные узлы графа |
+| `knowledge_graph.py` | `knowledge_connections` | Связи между узлами |
+| `interest_hierarchy.py` | `interest_hierarchy_nodes` | Иерархия интересов |
+| `interest_hierarchy.py` | `user_interest_graph_weights` | Персональные веса узлов |
+| `message.py` | `messages` | Сообщения чатов (источник AI-анализа) |
+| `chat.py` | `chats` | Диалоги 1:1 |
+| `interest.py` | `interests` | Публикации интересов (социальная лента) |
 | `favorite_interest.py` | `favorite_interests` | M2M избранное |
 | `report.py` | `reports` | Жалобы модерации |
 | `chat_settings.py` | `chat_settings` | Настройки чатов |
-| `session.py` | — | Фабрика сессий, `global_init(DATABASE_URL)` |
-
-**Важно для LLM:** `app/ai/models.py` содержит только legacy-таблицы (`ai_conversation_analysis`, `ai_training_metrics`) и re-export из `data.ai`. Канонические AI-модели — **только в `data/ai.py`**.
-
-### 2.4. Модуль `app/` — веб-слой
-
-Blueprints регистрируются в `create_app()`:
-
-```python
-# app/__init__.py (упрощённо)
-app.register_blueprint(main_bp)      # routes.py — стартовая страница
-app.register_blueprint(auth_bp)
-app.register_blueprint(profile_bp)
-app.register_blueprint(interests_bp)
-app.register_blueprint(chat_bp)
-app.register_blueprint(moderation_bp)
-app.register_blueprint(analytics_bp)
-```
-
-**Триггер AI-анализа** — в `app/chat.py`, после сохранения сообщения:
-```python
-analyze_user_profile.delay(author_id)  # асинхронно через Celery
-```
-
-**Сессии БД в HTTP:** `app/db.py` → `get_db_session()` (context manager).  
-**Сессии БД в Celery:** `DBTask` в `personality_analyzer.py` создаёт сессию на каждый вызов задачи.
-
-### 2.5. Модуль `ml/` — обучение
-
-| Скрипт | Назначение |
-|--------|------------|
-| `preprocess.py` | Корпус → SBERT-эмбеддинги + ручные признаки → JSON/PT датасет |
-| `train_ocean.py` | Обучение `PersonalityClassifier`, метрики R²/MAE, сохранение в `ml/artifacts/personality_model_best.pth` |
-| `train_mbti.py` | Обучение `MBTIClassifier` → `ml/artifacts/mbti_model.pth` |
-| `precompute_embedding.py` | Предвычисление эмбеддингов |
-| `test_model.py` | Валидация модели |
-
-**Артефакты** (`config.PERSONALITY_MODEL_PATH`, `config.MBTI_MODEL_PATH`):
-- `personality_model_best.pth` — веса OCEAN-классификатора
-- `mbti_model.pth` — веса MBTI-классификатора
-
-**Метрики (из README):** R² ≈ 0.68, MAE ≈ 0.09, датасет ~1726 примеров.
 
 ---
 
-## 3. ДЕТАЛЬНОЕ ОПИСАНИЕ ИИ-КОНВЕЙЕРА (AI PIPELINE)
+## 3. BLUEPRINTS И ЭНДПОИНТЫ
 
-### 3.1. Общая схема потока данных
-
-```
-[Пользователь пишет сообщение]
-         │
-         ▼
-app/chat.py ──POST /messages──► INSERT messages (data/message.py)
-         │
-         ▼
-analyze_user_profile.delay(user_id)     ← Celery + Redis
-         │
-         ▼
-┌────────────────────────────────────────────────────────────┐
-│  Celery Task: ai.analyze_user_profile                      │
-│  (app/ai/personality_analyzer.py)                          │
-│                                                            │
-│  1. SELECT messages WHERE author_id = user_id              │
-│     ORDER BY timestamp DESC LIMIT MAX_MESSAGES (50)        │
-│  2. full_text = join(message.content)                      │
-│  3. profiler = get_profiler()  → AIProfiler singleton      │
-│  4. analysis = profiler.analyze_profile(full_text)         │
-│  5. UPSERT UserPersonalityProfile + AIExtractedInterests   │
-│  6. profile.embedding = ocean  (Vector(5))                 │
-│  7. COMMIT                                                 │
-│  8. update_compatibility.delay(user_id)                    │
-└────────────────────────────────────────────────────────────┘
-
-
-# Интеграционные заметки (кратко):
-- ContextualAdapter (app/ai_profiler/contextual_adapter.py) инициализируется в AIProfiler и отдаёт sbert_model + методы enrich_text/prepare_for_encoding; используется для обогащения поисковых запросов и подготовки якорей для ZeroShotInterestExtractor.
-- matching_engine (app/ai/matching_engine.py) собирает компоненты совместимости: graph_score (вызывая app.ai_profiler.interest_graph.calculate_graph_interest_score), schwartz и поведение; profile.py endpoints используют calculate_multidimensional_compatibility/graph scoring и дополняют pgvector-результатами.
-- register_user_tags() вызывается в profile.py перед матчингом для регистрации/записи query-тегов в UserInterestGraphWeight, чтобы обеспечить наличие per-user weights для скоринга.
-         │
-         ▼
-┌────────────────────────────────────────────────────────────┐
-│  Celery Task: ai.update_compatibility                      │
-│  pgvector cosine_distance() на уровне PostgreSQL           │
-│  → UPSERT ai_user_compatibility                            │
-└────────────────────────────────────────────────────────────┘
-```
-
-### 3.2. Задача `analyze_user_profile`
-
-**Файл:** `app/ai/personality_analyzer.py`  
-**Имя Celery:** `ai.analyze_user_profile`  
-**Базовый класс:** `DBTask` — автоматическое создание/закрытие SQLAlchemy-сессии.
-
-**Алгоритм:**
-
-1. **Загрузка пользователя** — `User` по `user_id`; выход с `{"error": "User not found"}` если нет.
-2. **Сбор корпуса** — последние `config.MAX_MESSAGES_PER_ANALYSIS` (по умолчанию 50) сообщений автора:
-   ```python
-   messages = db.query(Message).filter_by(author_id=user_id)
-       .order_by(Message.timestamp.desc()).limit(50).all()
-   full_text = " ".join([m.content for m in messages if m.content])
-   ```
-3. **Проверка** — пустой `full_text` → `{"error": "No text data for analysis"}`.
-4. **Инференс** — `get_profiler().analyze_profile(full_text)`.
-5. **Запись `UserPersonalityProfile`:**
-   - Скalarные колонки OCEAN: `openness`, `conscientiousness`, `extraversion`, `agreeableness`, `neuroticism`
-   - **`embedding = ocean`** — список из 5 float `[O, C, E, A, N]` напрямую в колонку `Vector(5)`
-   - MBTI, стиль коммуникации, traits, values, confidence_score, last_analyzed
-6. **Запись `AIExtractedInterests`** — hobbies, topics, skills, dislikes, goals, preferences из `analysis["interests"]`.
-7. **`db.commit()`**
-8. **Цепочка:** `update_compatibility.delay(user_id)`
-
-**Конфигурационные пороги** (`config.py`):
-- `MIN_MESSAGES_FOR_ANALYSIS` — минимум сообщений (dev: 3, prod: 10)
-- `ANALYSIS_MESSAGE_TRIGGER` — триггер по количеству (dev: 5, prod: 15)
-- `ANALYSIS_COOLDOWN` — cooldown между анализами (сек)
-- `MAX_MESSAGES_PER_ANALYSIS` — 50
-
-> **Примечание:** текущая реализация вызывает анализ на **каждое** новое сообщение (`force=True` по умолчанию). Rate-limiting на уровне конфига (`AI_ANALYSIS_RATE_LIMIT`) определён, но в задаче не проверяется явно — потенциальная точка оптимизации.
-
-### 3.3. Класс `AIProfiler` (`app/ai_profiler/core.py`)
-
-**Singleton:** `app/ai_profiler/__init__.py` → `get_profiler()` с double-checked locking. Модели загружаются один раз на процесс Celery-воркера.
-
-#### 3.3.1. Загружаемые модели
-
-| Компонент | Модель / архитектура | Вход | Выход |
-|-----------|---------------------|------|-------|
-| **SBERT** | `SentenceTransformer(config.EMBEDDING_MODEL)` — default: `paraphrase-multilingual-MiniLM-L12-v2` | текст | вектор 384 dim |
-| **PersonalityClassifier** | PyTorch: Linear→ResidualBlock→Linear, ordinal 5×10 bins | 388 dim | 5 OCEAN scores [0,1] |
-| **MBTIClassifier** | PyTorch MLP 384→256→128→16 | 384 dim (только SBERT) | 16 классов MBTI |
-
-**Путь к весам:** `config.PERSONALITY_MODEL_PATH`, `config.MBTI_MODEL_PATH` → `ml/artifacts/*.pth`.
-
-#### 3.3.2. Метод `analyze_profile(text)` — пошагово
-
-```
-text
-  │
-  ├─► clean_user_text()          # app/ai_profiler/text_utils.py
-  │     • удаление URL, null-bytes, лишних символов
-  │     • лимит 200 000 символов
-  │
-  ├─► get_manual_features()      # 4 признака:
-  │     [длина/1000, доля CAPS, count(!)/5, count(?)/5]
-  │
-  ├─► bert_model.encode()        # SBERT → tensor [1, 384]
-  │
-  ├─► torch.cat([emb, manual])   # combined_input [1, 388]
-  │
-  ├─► PersonalityClassifier.predict_scores()
-  │     • ordinal softmax → weighted bin centers
-  │     • clip [0.05, 0.95]
-  │     → ocean: [O, C, E, A, N]
-  │
-  ├─► MBTI (Neural Blend):
-  │     • mbti_model(emb) → softmax → mbti_probs (если .pth есть)
-  │     • infer_mbti(ocean) → rule-based тип + _ocean_to_soft_probs()
-  │     • blended = w * mbti_probs + (1-w) * ocean_soft
-  │       w = config.MBTI_NEURAL_BLEND_WEIGHT (default 0.7)
-  │     → mbti_type (argmax)
-  │
-  ├─► infer_communication_style()  # formality, enthusiasm, detail_oriented
-  ├─► extract_interests()          # rule-based: hobbies, topics, skills, …
-  └─► return dict {ocean, mbti_type, communication, interests, …}
-```
-
-#### 3.3.3. OCEAN — семантика шкал
-
-Пять **независимых непрерывных** значений в диапазоне **[0.0, 1.0]**:
-
-| Индекс | Признак | Интерпретация |
-|--------|---------|---------------|
-| 0 | Openness (O) | Открытость новому опыту |
-| 1 | Conscientiousness (C) | Добросовестность, организованность |
-| 2 | Extraversion (E) | Экстраверсия |
-| 3 | Agreeableness (A) | Доброжелательность |
-| 4 | Neuroticism (N) | Нейротизм / эмоциональная нестабильность |
-
-**Архитектура предсказания:** не регрессия напрямую, а **ordinal classification** — 10 бинов на каждый признак, затем взвешенное математическое ожидание (`bins_to_score`).
-
-#### 3.3.4. MBTI — семантика
-
-- **Категориальный** признак: одна из 16 строк (`INTJ`, `ENFP`, …).
-- **Два источника:**
-  1. Нейросеть `MBTIClassifier` на SBERT-эмбеддинге (384 dim)
-  2. Rule-based `infer_mbti(ocean)` — пороги по OCEAN (E/I ← extraversion, N/S ← openness, T/F ← agreeableness, J/P ← conscientiousness; neuroticism > 0.75 → принудительно I)
-- **Слияние:** `MBTI_NEURAL_BLEND_WEIGHT` (default 0.7 в пользу нейросети).
-
-#### 3.3.5. Упаковка OCEAN в `embedding`
+### 3.1. Регистрация
 
 ```python
-# personality_analyzer.py, строки 116-121
-profile.openness = ocean[0]
-profile.conscientiousness = ocean[1]
-# …
-profile.embedding = ocean  # list[float] длиной 5 → pgvector Vector(5)
+# app/__init__.py
+from .routes import main_bp
+from .auth import auth_bp
+from .profile import profile_bp
+from .interests import interests_bp
+from .chat import chat_bp
+from .moderation import moderation_bp
+from .analytics import analytics_bp
 ```
 
-**Критически важно:** `embedding` — это **не SBERT-вектор**. Это прямое отображение 5 OCEAN-скоров в pgvector-столбец для ANN-поиска совместимости. SBERT используется только на этапе инференса и в endpoint'ах семантического matching по интересам.
+### 3.2. Ключевые эндпоинты
 
-### 3.4. Запуск Celery
+| Маршрут | Метод | Blueprint | Описание |
+|---------|-------|-----------|----------|
+| `/` | GET | `main` | Стартовая страница |
+| `/intereses` | GET | `main` | Главная страница с графом |
+| `/viewProfile?user_id=N` | GET | `profile` | Профиль другого пользователя (MBTI, OCEAN, Schwartz, интересы) |
+| `/profile` | GET/POST | `profile` | Свой профиль с AI-психотипом |
+| `/api/graph/match/<node_id>` | GET | `profile` | Поиск кандидатов по узлу графа |
+| `/api/graph/report/<user_id>?node_id=N` | GET | `profile` | AI-ревью совместимости (match_report) |
+| `/knowledge_graph_data` | GET | `profile` | Данные для визуализации графа |
+| `/knowledge_graph/node` | POST | `profile` | Создать узел графа |
+| `/knowledge_graph/node/<id>` | PUT | `profile` | Обновить узел |
+| `/knowledge_graph/node/<id>` | DELETE | `profile` | Удалить узел |
+| `/create_chat/<user_id>` | POST | `chat` | Создать чат с пользователем |
+| `/api/graph/report/<user_id>` | GET | `profile` | Получить AI-отчёт совместимости |
+| `/upload_avatar` | POST | `profile` | Загрузить аватар |
+| `/favorite/<interest_id>` | POST | `interests` | Добавить/убрать избранное |
+
+---
+
+## 4. AI-КОНВЕЙЕР (DETAILED PIPELINE)
+
+### 4.1. Двухфазная архитектура
+
+```
+ФАЗА 1 — Анализ сообщений (WRITE):
+[Сообщение] → app/chat.py → analyze_user_profile.delay(user_id)
+                                       │
+                                       ▼
+                              AIProfiler.analyze_profile(text)
+                                       │
+                          ┌────────────┴────────────┐
+                          ▼                         ▼
+                  UserPersonalityProfile    AIExtractedInterests
+                  OCEAN + MBTI + embed      hobbies, skills, goals
+                          │
+                          ▼
+                  UserSchwartzProfile       UserBehaviorProfile
+                  (если модуль включён)      (avg_char, reply_time, …)
+                          │
+                          ▼
+                  update_compatibility.delay(user_id)
+                          │
+                          ▼
+                  pgvector cosine_distance()
+                  → UserCompatibility (пары)
+
+
+ФАЗА 2 — Поиск и ранжирование (READ):
+[Клик по узлу графа]
+       │
+       ▼
+GET /api/graph/match/<node_id>
+       │
+       ├─► resolve_tags_batch()        # Теги узла → слаг иерархии
+       ├─► calculate_graph_interest_score()  # Graph Score (overlap)
+       ├─► compute_ocean_similarity()        # OCEAN Score
+       ├─► compute_jaccard_interest_similarity()  # Jaccard Score
+       ├─► compute_root_personality_score()  # Root Personality Score
+       │
+       ├─► комбинация: blend_weight * root_score + ...
+       │    + micro_gradient_step()   # подстройка под историю пользователя
+       │
+       └─► возврат: [{user_id, user_name, compatibility, matched_tags, match_reason}, …]
+```
+
+### 4.2. Двухконтурная система весов
+
+| Контур | Описание | Веса |
+|--------|----------|------|
+| **Глобальный (медленный)** | `GlobalWeightsConfig` — усреднённые веса всех пользователей | ocean=0.35, graph=0.40, jaccard=0.25 |
+| **Персональный (быстрый)** | `User.metric_weight_*_offset` — индивидуальные смещения | базовые веса + offset |
+
+**Микро-градиентный шаг** (`search_ranking.py`): после каждого matching-запроса веса пользователя корректируются на `learning_rate` в зависимости от того, на какие профили пользователь кликнул.
+
+### 4.3. Генерация Match-отчёта (`app/ai/match_report.py`)
+
+```
+[Пользователь нажимает «Анализ ИИ»]
+       │
+       ▼
+GET /api/graph/report/<target_user_id>?node_id=<node_id>
+       │
+       ├─► Загрузить UserPersonalityProfile (оба пользователя)
+       ├─► Загрузить UserSchwartzProfile (оба)
+       ├─► Загрузить UserBehaviorProfile (оба)
+       ├─► Загрузить AIExtractedInterests (оба)
+       │
+       ├─► _build_prompt_payload()
+       │      ┌─────────────────────────────────────────┐
+       │      │ MBTI, OCEAN, Schwartz top-3,            │
+       │      │ коммуникация, сотрудничество,            │
+       │      │ поведение, цели, интересы,               │
+       │      │ общие теги                               │
+       │      └─────────────────────────────────────────┘
+       │
+       ├─► 1. YandexGPT (приоритет)
+       │        _yandexgpt_generate(prompt, system_prompt)
+       │        └─► API: foundationModels/v1/completion
+       │
+       ├─► 2. Ollama (если OLLAMA_ENABLED)
+       │
+       └─► 3. Статический шаблонный fallback
+              build_default_match_report()
+              └─► "Ваш пересекающийся интерес к сфере «X»…"
+```
+
+**System prompt для LLM:**
+```
+Ты — эксперт-психолог и AI-аналитик социальной платформы Nexus.
+Напиши краткое (2-3 предложения), живое и максимально персонализированное
+обоснование совместимости двух пользователей.
+— Используй ТОЛЬКО факты из блока «ДАННЫЕ»
+— Запрещены шаблонные фразы вроде «Мы подобрали тебе людей...»
+— Интеллектуальный, вовлекающий, дружелюбный стиль
+— Не использовать markdown, эмодзи, кавычки
+```
+
+### 4.4. Dynamic Tag Enricher (`app/ai_profiler/dynamic_enrichment.py`)
+
+Two-Stage Semantic Routing для разрешения нечётких тегов:
+
+```
+Сырой тег (например "cs2", "я люблю музыку")
+       │
+       ▼
+Stage 1 — Прямое совпадение
+  ├─► dynamic_aliases (кэш)
+  ├─► exact match по slug
+  └─► fallback к Stage 2
+       │
+       ▼
+Stage 2 — LLM-резолв
+  ├─► 1. YandexGPT: сопоставить тег с иерархией
+  ├─► 2. Ollama: fallback если YandexGPT недоступен
+  └─► 3. Усечение: обрезать до 100 символов как slug
+       │
+       ▼
+  Кэшировать в dynamic_aliases
+```
+
+### 4.5. Root Personality Scoring (`app/ai_profiler/root_personalities.py`)
+
+Три корневых архетипа, определяющих базовый профиль пользователя:
+
+| Архетип | Категория | OCEAN-профиль | Доминанта Шварц |
+|---------|-----------|---------------|-----------------|
+| **work** | Работа | [0.55, 0.85, 0.40, 0.55, 0.25] | achievement: 0.90, security: 0.65 |
+| **entertainment** | Хобби | [0.80, 0.35, 0.70, 0.50, 0.40] | stimulation: 0.85, hedonism: 0.80 |
+| **life** | Психология | [0.75, 0.50, 0.40, 0.80, 0.55] | universalism: 0.90, benevolence: 0.85 |
+
+**Определение категории из KnowledgeNode:**
+```
+Если узел имеет поле category → KNOWLEDGE_CATEGORY_TO_ROOT[category]
+Иначе → наследование от родительского узла по title
+Иначе → fallback "work"
+```
+
+**Blend:** `root_personality_score = blend_weight * совпадение_архетипа + (1 - blend_weight) * weighted_average(ocean_sim, schwartz_sim)`
+
+### 4.6. LLM Providers (`app/ai_profiler/providers.py`)
+
+Абстрактная фабрика с failover-каскадом:
+
+```
+LLMProvider (abstract)
+├── YandexGPTProvider    → api_key из config.YANDEX_GPT_API_KEY
+├── OllamaProvider       → endpoint: http://localhost:11434
+├── DeepSeekProvider     → (заготовка)
+├── OpenAIProvider       → (заготовка)
+└── GroqProvider         → (заготовка)
+
+FailoverCascade:
+  build_cascade(config) → [YandexGPT, Ollama] (по enabled-флагам)
+  .classify(prompt)     → перебирает провайдеров, возвращает первый успешный ответ
+```
+
+---
+
+## 5. ГРАФ ЗНАНИЙ И ИЕРАРХИЯ ИНТЕРЕСОВ
+
+### 5.1. Три слоя интересов
+
+| Слой | Таблица | Источник | UI |
+|------|---------|----------|-----|
+| **Визуальный граф** | `knowledge_nodes` + `knowledge_connections` | Seed / ручное создание | Canvas с узлами (SVG + D3.js) |
+| **Иерархия интересов** | `interest_hierarchy_nodes` | Seed (tools/seed_db.py) | Невидим, основа для скоринга |
+| **AI-извлечение** | `ai_extracted_interests` | AIProfiler.extract_interests() | Профиль пользователя |
+
+### 5.2. KnowledgeNode
+
+```python
+KnowledgeNode:
+  id, user_id, title, description
+  category: str    # "work" | "hobby" | "psychology" | "want"
+  x, y: float      # позиция на визуальном графе
+```
+
+**category → root_category** (через KNOWLEDGE_CATEGORY_TO_ROOT в root_personalities.py):
+- `work` → `"work"`
+- `hobby` → `"entertainment"`
+- `psychology` → `"life"`
+- `want` → `"work"` (fallback)
+
+### 5.3. Иерархия (InterestHierarchyNode)
+
+Материализованный путь (`path = "/1/5/12/"`), embedding Vector(384) для семантического поиска:
+
+```
+Корень (/)
+├── it_development (/1/)
+│   ├── programming (/1/5/)
+│   │   ├── python (/1/5/12/)
+│   │   └── javascript (/1/5/13/)
+│   ├── mobile_dev (/1/6/)
+│   └── devops (/1/7/)
+├── design (/2/)
+├── sports (/3/)
+└── psychology (/4/)
+```
+
+### 5.4. Метрики скоринга
+
+| Метрика | Функция | Диапазон | Описание |
+|---------|---------|----------|----------|
+| **Graph Score** | `calculate_graph_interest_score()` | [0, 1] | Пересечение весов в иерархии |
+| **OCEAN** | `compute_ocean_similarity()` | [0, 1] | Косинусная близость OCEAN-векторов + комплементарность |
+| **Jaccard** | `compute_jaccard_interest_similarity()` | [0, 1] | Jaccard по AIExtractedInterests |
+| **Schwartz** | `compute_schwartz_similarity()` | [0, 1] | Косинус по 10 ценностям |
+| **Root Personality** | `compute_root_personality_score()` | [0, 1] | Близость к корневому архетипу |
+
+---
+
+## 6. UI / FRONTEND
+
+### 6.1. Главная страница (`templates/index.html`)
+
+```
+┌──────────────────────────────────────────────────────┐
+│  ┌────────────────────────────┐  ┌──────────────────┐│
+│  │   Граф знаний (SVG+D3)    │  │  Подходящие люди  ││
+│  │   Интерактивный Canvas     │  │                   ││
+│  │   drag/zoom/edit           │  │  [88%] Иван       ││
+│  │                            │  │       [Проф][AI]  ││
+│  │   [Создать узел]           │  │  ┌──тег1 +ещё 2──┐││
+│  │                            │  │  │               ││
+│  └────────────────────────────┘  │  [92%] Мария     ││
+│                                   │       [Проф][AI]  ││
+│                                   └──────────────────┘│
+│                                                       │
+│  ┌── AI Review Toast (bottom-left) ──────────────┐   │
+│  │ ✨ Nexus AI — Анализ                     [✕]  │   │
+│  │ Ваш пересекающийся интерес к сфере ...        │   │
+│  └───────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────┘
+```
+
+**AI Review Toast:** фиксированный тост в левом нижнем углу. Появляется при нажатии «Анализ ИИ» в карточке кандидата. Не блокирует просмотр списка. Содержит typewriter-анимацию текста. Авто-закрывается при клике на новый узел графа.
+
+### 6.2. Карточка кандидата
+
+```
+┌─────────────────────────────────────────────┐
+│  [88%]  Иван                    [Проф][AI]   │
+│  ┌─── программирование ─── +ещё 2 ─────────┐│
+│  │  python, django, backend                 ││
+│  └──────────────────────────────────────────┘│
+└─────────────────────────────────────────────┘
+```
+
+- Первый тег всегда виден
+- Остальные скрыты под `+ещё N`, раскрываются по клику
+
+### 6.3. Профили
+
+**Свой профиль** (`templates/profile.html`):
+- OCEAN radar chart (Chart.js)
+- MBTI, стиль общения, сотрудничество, формальность, энтузиазм
+- Schwartz value bars (топ-5)
+- AI-извлечённые интересы (хобби, навыки, цели)
+
+**Чужой профиль** (`templates/view_profile.html`):
+- Аватар, имя, био, контакты
+- Психологическая карточка: MBTI, OCEAN (топ-2 черты), Schwartz bars (топ-5)
+- AI-интересы: хобби, навыки, темы, цели, профессия, стиль работы
+
+### 6.4. CSS Architecture
+
+Единая система CSS-переменных в `static/src/styles/variables.css`:
+
+```
+--color-bg              # Фон страницы
+--color-bg-deep         # Тёмный фон графа
+--color-panel           # Панели
+--color-card            # Карточки кандидатов
+--color-text            # Основной текст
+--color-text-heading    # Заголовки (яркий белый)
+--color-text-soft       # Второстепенный текст
+--color-accent-purple   # Акцент графа
+--color-success         # Зелёный (теги)
+--color-danger          # Красный (удаление, ошибки)
+--radius-md / --radius-lg / --radius-pill
+--space-1 … --space-8
+--shadow-graph / --shadow-toast
+```
+
+---
+
+## 7. КОНФИГУРАЦИЯ
+
+### 7.1. Критичные env-переменные
 
 ```bash
-# Worker (из корня проекта)
-celery -A app.ai.personality_analyzer worker --loglevel=info
+# База данных
+DATABASE_URL=postgresql://my_app_user:pass@127.0.0.1:5432/nexus_db
 
-# Или через re-export:
-celery -A app.ai.celery_tasks worker --loglevel=info
+# Redis
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+REDIS_CACHE_URL=redis://localhost:6379/1
+
+# Безопасность
+SECRET_KEY=your-secret-key-here
+
+# ML-модели
+EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+LOCAL_ARTIFACTS_DIR=./ml/artifacts
+PERSONALITY_MODEL_FILENAME=personality_model_best.pth
+MBTI_MODEL_FILENAME=mbti_model.pth
+MBTI_NEURAL_BLEND_WEIGHT=0.7
+
+# LLM (YandexGPT)
+YANDEX_GPT_API_KEY=your-api-key
+YANDEX_GPT_API_BASE=https://llm.api.cloud.yandex.net
+YANDEX_GPT_MODEL=gpt://b1gd7uvpjf1qlla85o97/yandexgpt-5.1/latest
+
+# Ollama (опционально)
+OLLAMA_ENABLED=False
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b
+
+# AI-анализ
+MIN_MESSAGES_FOR_ANALYSIS=3        # dev
+ANALYSIS_MESSAGE_TRIGGER=5          # dev
+ANALYSIS_COOLDOWN=0                 # dev
+
+# Метрики
+ROOT_PERSONALITY_BLEND_WEIGHT=0.3
+PERSONALITY_OCEAN_WEIGHT=0.6
+PERSONALITY_SCHWARTZ_WEIGHT=0.4
 ```
 
-При сидинге (`tools/seed_db.py`) worker **не нужен** — используется синхронный вызов:
+### 7.2. Профили конфигурации
+
+| Класс | FLASK_ENV | Особенности |
+|-------|-----------|-------------|
+| `DevelopmentConfig` | development | DEBUG=True, MIN_MESSAGES=3, cooldown=0 |
+| `ProductionConfig` | production | Secure cookies, строгие лимиты |
+| `TestingConfig` | testing | SQLite in-memory |
+
+---
+
+## 8. CELERY-ЗАДАЧИ
+
+| Имя задачи | Функция | Триггер | Описание |
+|-----------|---------|---------|----------|
+| `ai.analyze_user_profile` | `analyze_user_profile()` | Каждое новое сообщение | Запускает полный AI-пайплайн для пользователя |
+| `ai.update_compatibility` | `update_compatibility()` | После analyze_user_profile | Пересчитывает pgvector-совместимость для всех пар |
+
+**Запуск worker:**
+```bash
+celery -A app.ai.personality_analyzer worker --loglevel=info
+```
+
+**Seed-режим (синхронный, без Celery):**
 ```python
 analyze_user_profile.apply(args=[u_id], kwargs={"force": True}).result
 ```
 
 ---
 
-## 4. ИНФРАСТРУКТУРА РАБОТЫ С ВЕКТОРАМИ (pgvector & HNSW)
+## 9. СИДИНГ БД (`tools/seed_db.py`)
 
-### 4.1. Расширение pgvector
+**Назначение:** наполнение PostgreSQL тестовыми данными + полный прогон AI-пайплайна.
 
-**Миграция:** `migrations/versions/0acf81f89c90_add_pgvector.py`
+**Параметры:**
+- 200 пользователей
+- 16 архетипов (из ROOT_ARCHETYPES + комбинации)
+- 5 OCEAN-кластеров
+- Schwartz-профили (на основе архетипов)
+- pgvector эмбеддинги
+- Шум к весам графа (±0.1)
+- Knowledge nodes (3 на пользователя)
+- Чаты + сообщения
 
-```python
-op.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-
-op.add_column('ai_user_personality_profiles',
-    sa.Column('embedding', Vector(5), nullable=True))
-
-op.create_index(
-    'idx_user_personality_embedding_hnsw',
-    'ai_user_personality_profiles',
-    ['embedding'],
-    postgresql_using='hnsw',
-    postgresql_with={'m': 16, 'ef_construction': 64},
-    postgresql_ops={'embedding': 'vector_cosine_ops'}
-)
+**Алгоритм:**
 ```
-
-**ORM-тип** (`data/ai.py`):
-```python
-from pgvector.sqlalchemy import Vector
-embedding = Column(Vector(5), nullable=True)
+FOR each user:
+  1. INSERT users
+  2. INSERT knowledge_nodes (3 random tags)
+  3. INSERT knowledge_connections
+  4. INSERT chats (с пользователем #1)
+  5. INSERT messages (архетипные тексты)
+  6. analyze_user_profile SYNC → OCEAN + MBTI + интересы
 ```
-
-### 4.2. HNSW-индекс
-
-| Параметр | Значение | Назначение |
-|----------|----------|------------|
-| Имя | `idx_user_personality_embedding_hnsw` | — |
-| Алгоритм | HNSW | Approximate Nearest Neighbor |
-| Метрика | `vector_cosine_ops` | Косинусное расстояние |
-| `m` | 16 | Макс. связей на узел графа индекса |
-| `ef_construction` | 64 | Точность построения индекса |
-
-HNSW обеспечивает сублинейный поиск ближайших профилей при росте числа пользователей.
-
-### 4.3. Архитектурный сдвиг: совместимость в СУБД
-
-**Было (legacy):** попарный расчёт в Python через `AIProfiler.calculate_compatibility()` — взвешенное еuclidean-расстояние между OCEAN-векторами, матричные операции NumPy.
-
-**Стало (Celery-пайплайн):** расчёт полностью в SQL через `pgvector.sqlalchemy`:
-
-```python
-# app/ai/personality_analyzer.py — update_compatibility
-similar_profiles = db.query(
-    UserPersonalityProfile.user_id,
-    UserPersonalityProfile.mbti_type,
-    UserPersonalityProfile.embedding.cosine_distance(my.embedding).label("distance")
-).filter(
-    UserPersonalityProfile.user_id != user_id,
-    UserPersonalityProfile.embedding.isnot(None)
-).all()
-```
-
-**Семантика `cosine_distance`:**
-- Диапазон: **[0, 2]**
-- 0 = идентичные векторы
-- 2 = противоположные направления
-
-**Нормализация в `overall_score` [0.0, 1.0]:**
-```python
-score_normalized = max(0.0, 1.0 - (float(distance) / 2.0))
-```
-
-**Запись в `ai_user_compatibility`:**
-```python
-compat.overall_score = score_normalized
-compat.romantic_score = score_normalized      # пока = overall
-compat.professional_score = score_normalized  # пока = overall
-compat.creative_score = score_normalized      # пока = overall
-compat.interest_overlap = score_normalized    # пока = overall
-compat.recommendations = {
-    "summary": "Compatibility calculated via pgvector cosine distance",
-    "mbti_pair": [my.mbti_type, other.mbti_type],
-}
-```
-
-**Upsert-логика:** предзагрузка существующих пар `(user_id, other_id)` в `compat_map`, обновление или создание новых `UserCompatibility`.
-
-### 4.4. Двойная система расчёта совместимости (важно для LLM)
-
-| Контекст | Механизм | Файл |
-|----------|----------|------|
-| **Фоновый пересчёт всех пар** | pgvector `cosine_distance` в SQL | `personality_analyzer.update_compatibility` |
-| **HTTP API matching по графу** | Python `AIProfiler.calculate_compatibility()` + SBERT similarity | `app/profile.py`, `app/interests.py` |
-
-Endpoint `/api/graph/match/<node_id>` (profile.py) комбинирует:
-- 70% — косинусное сходство SBERT между заголовками узлов графа
-- 30% — взвешенное euclidean-сходство OCEAN с учётом комплементарности (`complementary` indices)
-
-**Это не баг документации** — два пути существуют параллельно. При рефакторинге следует унифицировать.
-
-### 4.5. Тест pgvector
-
-`test_pgvector.py` — интеграционный тест:
-1. Создаёт двух пользователей с близкими OCEAN-векторами
-2. Записывает `embedding` напрямую
-3. Выполняет `.cosine_distance()` через SQLAlchemy
-4. Сверяет с NumPy (`1 - cos_sim`)
 
 ---
 
-## 5. ГРАФ ЗНАНИЙ И ДОПОЛНИТЕЛЬНЫЕ МОДУЛИ
+## 10. ТЕСТЫ
 
-### 5.1. Два слоя «интересов»
+### test_metrics.py — 55 тестов
 
-| Слой | Таблица | Источник данных | UI |
-|------|---------|-----------------|-----|
-| **Социальная лента** | `interests` | Пользователь публикует вручную | Лента, избранное |
-| **AI-извлечение** | `ai_extracted_interests` | `AIProfiler.extract_interests()` | JSON для персонализации |
-| **Визуальный граф** | `knowledge_nodes`, `knowledge_connections` | Seed / ручное создание | Canvas с узлами (x, y) |
+| Группа | Количество | Описание |
+|--------|-----------|----------|
+| Graph Score | 5 | calculate_graph_interest_score, hierarchical overlap |
+| Schwartz | 8 | compute_schwartz_similarity, cosine |
+| Root Personality | 10 | compute_root_personality_score, find_root_category |
+| Jaccard | 5 | compute_jaccard_interest_similarity |
+| OCEAN | 5 | compute_ocean_similarity |
+| Mapping integrity | 12 | KNOWLEDGE_CATEGORY_TO_ROOT, slug → archetype |
+| Edge cases | 10 | Пустые профили, None, граничные значения |
 
-#### `AIExtractedInterests` (`data/ai.py`)
-
-```python
-hobbies          # JSON list — «спорт», «coding», …
-topics           # JSON list — «AI», «психология», …
-skills           # JSON list — «python», «дизайн», …
-dislikes         # JSON list
-occupation       # string | null
-work_style       # text | null
-short_term_goals # JSON list
-long_term_goals  # JSON list
-preferences      # JSON dict — language_mix, message_length, …
-last_extraction  # datetime
-```
-
-Rule-based извлечение в `AIProfiler.extract_interests()` — словари ключевых слов (RU+EN), частотный анализ токенов.
-
-#### `KnowledgeNode` / `KnowledgeConnection`
-
-```python
-KnowledgeNode: user_id, title, description, category, x, y
-KnowledgeConnection: from_node_id, to_node_id, label
-```
-
-Frontend строит интерактивный граф; API matching ищет пользователей с похожими узлами.
-
-### 5.2. Чат-система
-
-**Модель `Chat`:** два участника (`user1_id`, `user2_id`), без group-chat.
-
-**Модель `Message`:**
-```python
-chat_id, author_id, content, file_url, timestamp,
-message_type  # "text", …
-reply_to_id   # self-FK для тредов
-```
-
-**Транспорт:**
-- REST API в `app/chat.py` (CRUD сообщений)
-- **Flask-SocketIO** для real-time (`app/extensions.py` → `socketio`)
-
-**Связь с AI:** каждое сохранённое сообщение → `analyze_user_profile.delay(author_id)`.
-
-### 5.3. Сидинг БД (`tools/seed_db.py`)
-
-**Назначение:** наполнение пустой PostgreSQL реалистичными данными + полный прогон AI-пайплайна.
-
-**Архетипы пользователей:**
-| Архетип | Категория | Характер сообщений |
-|---------|-----------|-------------------|
-| Профи | work | Планирование, кодстайл, рефакторинг |
-| Душа компании | psychology | Митапы, эмоции, командный дух |
-| Творец | hobby | UI/UX, Rust, Figma |
-| Скейтер/Геймер | hobby | CS2, Steam, скины |
-
-**Алгоритм `run_mega_seed(num_users=10)`:**
-```
-FOR each archetype user:
-  1. INSERT users (psycopg2 raw SQL)
-  2. INSERT knowledge_nodes (3 random tags from TOPICS)
-  3. INSERT chats (user_id=1 ↔ new_user)  # чат с владельцем
-  4. INSERT messages (4 msgs per archetype)
-  5. analyze_user_profile.apply([u_id]).result  # SYNC Celery
-     → OCEAN + MBTI + interests + embedding
-     → update_compatibility (async chain)
-```
-
-**Требования:** `SEED_DB_PASSWORD` в env, PostgreSQL доступен, ML-артефакты на месте, SBERT скачается при первом запуске.
-
-### 5.4. Прочие модули
-
-| Модуль | Назначение |
-|--------|------------|
-| `app/auth.py` | Регистрация, логин, Flask-Login sessions |
-| `app/moderation.py` | Жалобы (`Report`), действия модератора |
-| `app/analytics.py` | Метрики платформы (только `is_moderator`) |
-| `app/debug_bp.py` | Отладочные endpoint'ы |
-| `tools/watch_profile.py` | CLI-мониторинг изменений профиля |
-| `AI/config.py` | Legacy-конфиг (deprecated, использовать `config.py`) |
-
----
-
-## 6. КОНФИГУРАЦИЯ (СПРАВОЧНИК ДЛЯ LLM)
-
-### 6.1. Критичные env-переменные
-
+**Запуск:**
 ```bash
-DATABASE_URL=postgresql://my_app_user:PASSWORD@127.0.0.1:5432/nexus_db
-CELERY_BROKER_URL=redis://localhost:6379/0
-CELERY_RESULT_BACKEND=redis://localhost:6379/0
-SECRET_KEY=...
-EMBEDDING_MODEL=paraphrase-multilingual-MiniLM-L12-v2
-LOCAL_ARTIFACTS_DIR=./ml/artifacts
-PERSONALITY_MODEL_FILENAME=personality_model_best.pth
-MBTI_MODEL_FILENAME=mbti_model.pth
-NEXUS_MBTI_NEURAL_BLEND_WEIGHT=0.7
-```
-
-### 6.2. Профили конфигурации
-
-| Класс | FLASK_ENV | Особенности |
-|-------|-----------|-------------|
-| `DevelopmentConfig` | development | DEBUG=True, RATELIMIT_ENABLED=False, MIN_MESSAGES=3 |
-| `ProductionConfig` | production | Secure cookies, строгие лимиты |
-| `TestingConfig` | testing | SQLite in-memory, USE_LOCAL_AI_MODELS=True |
-
----
-
-## 7. ДИАГРАММА ПОЛНОГО ЖИЗНЕННОГО ЦИКЛА ДАННЫХ
-
-```
-                    ┌──────────────┐
-                    │   Browser    │
-                    └──────┬───────┘
-                           │ HTTP / WS
-                    ┌──────▼───────┐
-                    │  Flask App   │
-                    │  app/chat.py │
-                    └──────┬───────┘
-                           │ INSERT
-                    ┌──────▼───────┐
-                    │   messages   │◄──── data/message.py
-                    └──────┬───────┘
-                           │ .delay()
-                    ┌──────▼───────────────┐
-                    │  Redis (Celery)      │
-                    └──────┬───────────────┘
-                           │
-              ┌────────────▼────────────┐
-              │ analyze_user_profile    │
-              │  ├─ get_profiler()      │
-              │  ├─ AIProfiler.analyze  │
-              │  └─ COMMIT profiles     │
-              └────────────┬────────────┘
-                           │ .delay()
-              ┌────────────▼────────────┐
-              │ update_compatibility    │
-              │  └─ pgvector SQL query  │
-              └────────────┬────────────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         ▼                 ▼                 ▼
-┌────────────────┐ ┌───────────────┐ ┌──────────────────┐
-│ personality    │ │ extracted     │ │ compatibility    │
-│ profiles       │ │ interests     │ │ (overall_score)  │
-│ + embedding    │ │ (JSON)        │ │                  │
-│ Vector(5)      │ │               │ │                  │
-└────────┬───────┘ └───────────────┘ └──────────────────┘
-         │
-         ▼ HNSW index
-┌────────────────┐
-│ ANN search     │  cosine_distance(embedding, ?)
-│ (pgvector)     │
-└────────────────┘
+pytest test_metrics.py -v
 ```
 
 ---
 
-## 8. ПРАВИЛА ДЛЯ LLM-ПОМОЩНИКОВ (QUICK REFERENCE)
+## 11. ИЗВЕСТНЫЕ АРХИТЕКТУРНЫЕ ПРОБЛЕМЫ
 
-1. **Канонические ORM-модели AI** — `data/ai.py`, не `app/ai/models.py`.
-2. **`embedding` = OCEAN[5]**, не SBERT; размерность Vector(5).
-3. **Celery-задачи** определены в `app/ai/personality_analyzer.py`; `celery_tasks.py` — только re-export.
-4. **`get_profiler()`** — единственный способ получить `AIProfiler` (singleton).
-5. **Очистка текста** — всегда через `clean_user_text()` из `text_utils.py`.
-6. **Совместимость в БД** — только через `update_compatibility` + pgvector; HTTP endpoints могут использовать legacy Python-расчёт.
-7. **Миграции** — Alembic через Flask-Migrate; pgvector требует PostgreSQL (не SQLite для prod).
-8. **Конфиг** — только `config.py` в корне; не дублировать env-чтение.
-9. **При добавлении новых ORM-моделей** — регистрировать в `data/__all_models.py`.
-10. **ML-веса** — `ml/artifacts/*.pth`; пути через `config.PERSONALITY_MODEL_PATH`.
+| Проблема | Файлы | Описание |
+|----------|-------|----------|
+| Рассинхронизация SEMANTIC_ONTOLOGY и InterestHierarchyNode | `semantic_ontology.py`, `interest_graph.py` | Канонические слаги не совпадают, graph_score = 0 для пользователей без precomputed weights |
+| resolve_tag_to_slug хрупок | `dynamic_enrichment.py` | Нет fuzzy/semantic fallback для опечаток и синонимов |
+| Двойная система совместимости | `personality_analyzer.py`, `profile.py` | pgvector vs Python-SBERT — результаты могут расходиться |
+| register_user_tags не покрывает всех | `interest_graph.py`, `seed_db.py` | graph_score часто = 0 для не-seeded пользователей |
+| Нет rate-limiting на AI-анализ | `personality_analyzer.py` | Каждое сообщение триггерит анализ (потенциально дорого) |
 
 ---
 
-## 9. ИЗВЕСТНЫЕ ТОЧКИ РАСШИРЕНИЯ
+## 12. QUICK REFERENCE ДЛЯ РАЗРАБОТЧИКА
 
-| Задача | Куда смотреть |
-|--------|---------------|
-| Добавить новый признак личности | `PersonalityClassifier`, `train_ocean.py`, `data/ai.py` (новые колонки + migration) |
-| Изменить метрику совместимости | `update_compatibility()` + возможно размерность `Vector(N)` |
-| Добавить rate-limit на анализ | `analyze_user_profile()` + Redis/cache |
-| Унифицировать compatibility | Заменить Python-расчёт в `profile.py`/`interests.py` на чтение из `ai_user_compatibility` |
-| Улучшить extract_interests | `AIProfiler.extract_interests()` или LLM-API (`ANTHROPIC_API_KEY` в config) |
-| Новый blueprint | `app/__init__.py` → `register_blueprint` |
-
-
-### Выявленные архитектурные проблемы (кратко)
-- resolve_tag_to_slug хрупок к опечаткам и синонимам; требует fuzzy/semantic fallback (app/ai_profiler/interest_graph.py).
-- Рассинхронизация SEMANTIC_ONTOLOGY и _HIERARCHY_SEED: канонические слаги не совпадают (app/ai_profiler/semantic_ontology.py, interest_graph.py).
-- graph_score часто = 0 для пользователей без precomputed weights; register_user_tags/seed не покрывают всех (app/ai_profiler/interest_graph.py, tools/seed_db.py).
-- Двойная система совместимости (pgvector в БД vs Python-SBERT в endpoints) приводит к расхождению результатов (app/ai/personality_analyzer.py, app/profile.py).
+1. **Канонические ORM-модели AI** — `data/ai.py`, не `app/ai/models.py`
+2. **`embedding` = OCEAN[5]**, не SBERT; размерность Vector(5)
+3. **Celery-задачи** в `app/ai/personality_analyzer.py`; `celery_tasks.py` — re-export
+4. **`get_profiler()`** — единственный способ получить `AIProfiler` (singleton)
+5. **Очистка текста** — через `clean_user_text()` из `text_utils.py`
+6. **Конфиг** — только `config.py`; не дублировать чтение env
+7. **При добавлении новой модели** — регистрировать в `data/__all_models.py`
+8. **CSS-переменные** — только в `variables.css`; не хардкодить цвета
+9. **AI-ревью** — приоритет: YandexGPT → Ollama → шаблонный fallback
+10. **Новый blueprint** — регистрировать в `app/__init__.py`
 
 ---
 
-*Документ сгенерирован на основе анализа кодовой базы Nexus. Версия стека: Flask 3.1, Celery 5.6, PyTorch 2.11, pgvector 0.2.5, PostgreSQL 16.*
-
----
-
+*Версия документа: 2.0. Последнее обновление: июль 2026.*

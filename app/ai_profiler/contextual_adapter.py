@@ -23,8 +23,10 @@ from typing import Any
 from .semantic_ontology import SEMANTIC_ONTOLOGY
 from .taxonomy import INTEREST_TAXONOMY
 from config import config
+
 _contextual_adapter_instance = None
 _SHARED_SBERT_MODEL = None
+
 
 @dataclass
 class EnrichmentResult:
@@ -61,7 +63,6 @@ class ContextualAdapter:
         global _SHARED_SBERT_MODEL
         if _SHARED_SBERT_MODEL is None:
             from sentence_transformers import SentenceTransformer
-            # Берем модель строго из конфига проекта Nexus
             model_name = getattr(config, 'EMBEDDING_MODEL', 'paraphrase-multilingual-MiniLM-L12-v2')
             _SHARED_SBERT_MODEL = SentenceTransformer(model_name)
 
@@ -69,9 +70,11 @@ class ContextualAdapter:
 
     @staticmethod
     def _build_alias_index() -> list[tuple[str, str, dict]]:
-        """
-        Строит плоский индекс (alias, canonical_key, entry), отсортированный
+        """Строит плоский индекс (alias, canonical_key, entry), отсортированный
         по длине alias (длинные совпадения первыми — greedy longest match).
+
+        Returns:
+            Список кортежей (alias, canonical_key, entry) для поиска.
         """
         entries: list[tuple[str, str, dict]] = []
         for key, entry in SEMANTIC_ONTOLOGY.items():
@@ -82,8 +85,10 @@ class ContextualAdapter:
 
     @staticmethod
     def _build_taxonomy_index() -> list[tuple[str, str, str, list[str]]]:
-        """
-        Индекс таксономии: (subcategory_lower, global_cat, subcategory, anchors).
+        """Строит индекс таксономии: (subcategory_lower, global_cat, subcategory, anchors).
+
+        Returns:
+            Список кортежей для поиска по таксономии.
         """
         index: list[tuple[str, str, str, list[str]]] = []
         for global_cat, subcats in INTEREST_TAXONOMY.items():
@@ -92,8 +97,7 @@ class ContextualAdapter:
         return index
 
     def enrich_text(self, text: str) -> EnrichmentResult:
-        """
-        Обогащает произвольный текст для последующего SBERT.encode().
+        """Обогащает произвольный текст для последующего SBERT.encode().
 
         Алгоритм:
             1. Нормализация регистра для поиска.
@@ -119,7 +123,6 @@ class ContextualAdapter:
         enrichments: list[str] = []
         consumed_spans: list[tuple[int, int]] = []
 
-        # Уровень 1: онтологический словарь (longest match)
         for alias, concept_key, entry in self._alias_index:
             start = 0
             while True:
@@ -139,7 +142,6 @@ class ContextualAdapter:
                     subcategories.append(entry["subcategory"])
                 start = end
 
-        # Уровень 2: таксономия — частичное совпадение с подкатегорией или якорем
         for sub_lower, global_cat, subcategory, anchors in self._taxonomy_index:
             if sub_lower in lower and subcategory not in subcategories:
                 subcategories.append(subcategory)
@@ -156,7 +158,6 @@ class ContextualAdapter:
                             )
                         break
 
-        # Уровень 3: эвристики для непокрытых токенов
         tokens = self._WORD_RE.findall(lower)
         for token in tokens:
             if len(token) <= 2:
@@ -166,7 +167,6 @@ class ContextualAdapter:
             elif self._is_latin_only(token) and len(token) >= 3:
                 enrichments.append(f"англицизм {token}, технический термин")
 
-        # Сборка: оригинал сохраняется + семантическое обогащение
         unique_enrichments = list(dict.fromkeys(enrichments))
         if unique_enrichments:
             enriched = f"{normalized}. {'; '.join(unique_enrichments)}"
@@ -182,15 +182,27 @@ class ContextualAdapter:
         )
 
     def enrich_tag(self, tag: str) -> str:
-        """Обогащает одиночный тег. Возвращает enriched-строку."""
+        """Обогащает одиночный тег. Возвращает enriched-строку.
+
+        Args:
+            tag: Исходный тег.
+
+        Returns:
+            Обогащённая строка для векторного кодирования.
+        """
         return self.enrich_text(tag).enriched
 
     def enrich_interests(self, interests: dict[str, Any] | None) -> dict[str, Any]:
-        """
-        Обогащает структуру AIExtractedInterests / extract_interests().
+        """Обогащает структуру AIExtractedInterests.
 
-        Добавляет поле ``enriched_profile_text`` — конкатенация обогащённых
-        тегов для SBERT и для промпта Ollama.
+        Добавляет поле enriched_profile_text — конкатенация обогащённых
+        тегов для SBERT и для промпта LLM.
+
+        Args:
+            interests: Словарь с интересами пользователя.
+
+        Returns:
+            Копия словаря с добавленным полем enriched_profile_text.
         """
         if not interests:
             return {"enriched_profile_text": ""}
@@ -226,18 +238,15 @@ class ContextualAdapter:
     def prepare_for_encoding(
         self, texts: list[str] | str, *, deduplicate_enrichment: bool = True,
     ) -> list[str]:
-        """
-        Пакетная подготовка текстов непосредственно перед SBERT.encode().
-
-        Это главная точка перехвата в AIProfiler.calculate_text_similarity().
+        """Пакетная подготовка текстов непосредственно перед SBERT.encode().
 
         Args:
-            texts: Один текст или список.
+            texts: Один текст или список текстов.
             deduplicate_enrichment: Не дублировать обогащение, если оно
                 совпадает с оригиналом (экономия длины контекста).
 
         Returns:
-            list[str]: Обогащённые строки той же длины, что и вход.
+            Список обогащённых строк той же длины, что и вход.
         """
         if isinstance(texts, str):
             texts = [texts]
@@ -255,9 +264,13 @@ class ContextualAdapter:
         return results
 
     def build_profile_summary(self, interests: dict[str, Any] | None) -> str:
-        """
-        Краткое человекочитаемое описание интересов для LLM-промпта.
-        Использует обогащённые подкатегории и направления.
+        """Формирует краткое человекочитаемое описание интересов для LLM-промпта.
+
+        Args:
+            interests: Словарь с интересами пользователя.
+
+        Returns:
+            Строка с направлениями и контекстом для включения в промпт.
         """
         if not interests:
             return "интересы не указаны"
@@ -278,21 +291,42 @@ class ContextualAdapter:
 
     @staticmethod
     def _span_overlaps(spans: list[tuple[int, int]], start: int, end: int) -> bool:
+        """Проверяет, перекрывается ли диапазон [start, end) с одним из уже занятых диапазонов.
+
+        Args:
+            spans: Список занятых диапазонов [(start, end)].
+            start: Начало проверяемого диапазона.
+            end: Конец проверяемого диапазона.
+
+        Returns:
+            True если есть перекрытие, иначе False.
+        """
         return any(s < end and e > start for s, e in spans)
 
     @staticmethod
     def _is_latin_only(token: str) -> bool:
+        """Проверяет, состоит ли токен только из латинских букв.
+
+        Args:
+            token: Проверяемый токен.
+
+        Returns:
+            True если токен содержит только латинские буквы.
+        """
         return bool(re.fullmatch(r"[a-z]+", token, re.IGNORECASE))
 
 
 @lru_cache(maxsize=1)
 def get_contextual_adapter(enabled: bool = True) -> ContextualAdapter:
-    """Thread-safe singleton (через lru_cache) для ContextualAdapter."""
+    """Thread-safe singleton (через lru_cache) для ContextualAdapter.
+
+    Args:
+        enabled: Флаг включения адаптера.
+
+    Returns:
+        Экземпляр ContextualAdapter.
+    """
     global _contextual_adapter_instance
-
-    # Если адаптер еще ни разу не создавался — создаем его (это произойдет 1 раз при первом запросе)
     if _contextual_adapter_instance is None:
-        # Вместо ContextualAdapter() укажи твой реальный класс, который там создается
         _contextual_adapter_instance = ContextualAdapter()
-
     return _contextual_adapter_instance

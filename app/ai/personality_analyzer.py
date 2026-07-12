@@ -33,6 +33,13 @@ celery.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    beat_schedule={
+        "adjust-global-weights-every-24h": {
+            "task": "ai.adjust_global_weights",
+            "schedule": config.WEIGHT_ADJUSTMENT_INTERVAL,
+            "args": (),
+        },
+    },
 )
 
 
@@ -231,6 +238,26 @@ def analyze_schwartz_values_task(self, user_id: int) -> dict:
         return {"status": "success", "user_id": user_id}
     except Exception as exc:
         logger.exception("Schwartz analysis failed for user_id=%s", user_id)
+        db.rollback()
+        return {"error": str(exc)}
+
+
+@celery.task(base=DBTask, name="ai.adjust_global_weights", bind=True)
+def adjust_global_weights(self) -> dict:
+    """
+    Медленный глобальный контур (Block 2): собирает персональные смещения
+    весов метрик активных пользователей, усредняет тренд и плавно корректирует
+    глобальные базовые константы в GlobalWeightsConfig.
+    """
+    from app.ai_profiler.search_ranking import aggregate_global_trend
+
+    db = self.db
+    try:
+        result = aggregate_global_trend(db)
+        logger.info("[adjust_global_weights] Result: %s", result)
+        return result
+    except Exception as exc:
+        logger.exception("[adjust_global_weights] Error: %s", exc)
         db.rollback()
         return {"error": str(exc)}
 

@@ -106,6 +106,8 @@ class Config:
     EMBEDDING_MODEL: str = os.environ.get(
         "EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2"
     )
+    SBERT_MODEL_NAME: str = os.environ.get("SBERT_MODEL_NAME", EMBEDDING_MODEL)
+    SBERT_ALLOW_DOWNLOAD: bool = _env_bool("SBERT_ALLOW_DOWNLOAD", "True")
     LOCAL_MODELS_PATH: str = os.environ.get("LOCAL_MODELS_PATH", "./models")
     LOCAL_ARTIFACTS_DIR: str = os.environ.get(
         "LOCAL_ARTIFACTS_DIR", str(BASE_DIR / "ml" / "artifacts")
@@ -165,6 +167,47 @@ class Config:
     REQUIRE_ANALYSIS_CONSENT: bool = _env_bool("REQUIRE_ANALYSIS_CONSENT", "True")
     ANONYMIZE_TRAINING_DATA: bool = _env_bool("ANONYMIZE_TRAINING_DATA", "True")
     MAX_CHAT_HISTORY_DAYS: int = _env_int("MAX_CHAT_HISTORY_DAYS", 90)
+
+    # =========================================================================
+    # Block 1: Two-Stage LLM Classifier — Multi-Provider Failover Cascade
+    # =========================================================================
+    DEEPSEEK_API_KEY: str = os.environ.get("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_API_BASE: str = os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
+    DEEPSEEK_MODEL: str = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+
+    OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+    OPENAI_API_BASE: str = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
+    OPENAI_MODEL: str = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+    YANDEX_GPT_API_KEY: str = os.environ.get("YANDEX_GPT_API_KEY", "")
+    YANDEX_GPT_API_BASE: str = os.environ.get("YANDEX_GPT_API_BASE", "https://llm.api.cloud.yandex.net")
+    YANDEX_GPT_MODEL: str = os.environ.get("YANDEX_GPT_MODEL", "gpt://b1gd7uvpjf1qlla85o97/yandexgpt-5.1/latest")
+
+    GROQ_API_KEY: str = os.environ.get("GROQ_API_KEY", "")
+    GROQ_API_BASE: str = os.environ.get("GROQ_API_BASE", "https://api.groq.com/openai/v1")
+    GROQ_MODEL: str = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+
+    LLM_CLASSIFIER_TIMEOUT: int = _env_int("LLM_CLASSIFIER_TIMEOUT", 15)
+    LLM_CLASSIFIER_TOP_K: int = _env_int("LLM_CLASSIFIER_TOP_K", 10)
+    LLM_CLASSIFIER_FALLBACK_TO_OLLAMA: bool = _env_bool("LLM_CLASSIFIER_FALLBACK_TO_OLLAMA", "True")
+    LLM_CLASSIFIER_CONFIDENCE_THRESHOLD: float = _env_float("LLM_CLASSIFIER_CONFIDENCE_THRESHOLD", 0.6)
+
+    # =========================================================================
+    # Block 2: Hybrid Search Ranking — Two-Contour Optimization
+    # =========================================================================
+    RANKING_WEIGHT_OCEAN: float = _env_float("RANKING_WEIGHT_OCEAN", 0.35)
+    RANKING_WEIGHT_GRAPH: float = _env_float("RANKING_WEIGHT_GRAPH", 0.40)
+    RANKING_WEIGHT_JACCARD: float = _env_float("RANKING_WEIGHT_JACCARD", 0.25)
+
+    GLOBAL_LEARNING_RATE: float = _env_float("GLOBAL_LEARNING_RATE", 0.01)
+    WEIGHT_ADJUSTMENT_INTERVAL: int = _env_int("WEIGHT_ADJUSTMENT_INTERVAL", 86400)
+    MICRO_GRADIENT_LEARNING_RATE: float = _env_float("MICRO_GRADIENT_LEARNING_RATE", 0.05)
+    MIN_ACTIVE_USERS_FOR_GLOBAL_ADJUSTMENT: int = _env_int("MIN_ACTIVE_USERS_FOR_GLOBAL_ADJUSTMENT", 5)
+
+    # Root Personality Archetype Blend
+    ROOT_PERSONALITY_BLEND_WEIGHT: float = _env_float("ROOT_PERSONALITY_BLEND_WEIGHT", 0.30)
+    PERSONALITY_OCEAN_WEIGHT: float = _env_float("PERSONALITY_OCEAN_WEIGHT", 0.60)
+    PERSONALITY_SCHWARTZ_WEIGHT: float = _env_float("PERSONALITY_SCHWARTZ_WEIGHT", 0.40)
 
     # Rate Limiting
     RATELIMIT_STORAGE_URL: str = REDIS_URL

@@ -122,6 +122,41 @@ class DynamicAlias(SqlAlchemyBase):
     access_count = Column(Integer, default=0)  # Track popularity
 
 
+class GlobalWeightsConfig(SqlAlchemyBase):
+    """
+    Глобальные базовые веса метрик ранжирования (Block 2 — медленный контур).
+
+    Хранится одна строка (id=1). Обновляется Celery-задачей по расписанию
+    на основе усреднённых персональных смещений активных пользователей.
+    """
+
+    __tablename__ = "global_weights_config"
+
+    id = Column(Integer, primary_key=True, default=1)
+    weight_ocean = Column(Float, default=0.35)
+    weight_graph = Column(Float, default=0.40)
+    weight_jaccard = Column(Float, default=0.25)
+    learning_rate = Column(Float, default=0.01)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @classmethod
+    def get_or_create(cls, db) -> "GlobalWeightsConfig":
+        config = db.query(cls).filter_by(id=1).first()
+        if config is None:
+            config = cls(id=1)
+            db.add(config)
+            db.commit()
+        return config
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "weight_ocean": self.weight_ocean,
+            "weight_graph": self.weight_graph,
+            "weight_jaccard": self.weight_jaccard,
+            "learning_rate": self.learning_rate,
+        }
+
+
 class UserCompatibility(SqlAlchemyBase):
     __tablename__ = "ai_user_compatibility"
 

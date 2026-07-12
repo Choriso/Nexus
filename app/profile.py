@@ -15,8 +15,7 @@ from app.ai.match_report import generate_match_report
 from app.ai_profiler.contextual_adapter import get_contextual_adapter
 from config import config
 import redis
-import config  # Единый модуль конфигурации из корня проекта
-from app.db import get_db_session  # Контекстный менеджер БД
+from app.db import get_db_session
 from data.user import User
 from data.ai import UserPersonalityProfile, UserSchwartzProfile
 from data.behavior import UserBehaviorProfile
@@ -24,8 +23,6 @@ from sqlalchemy.orm import joinedload
 
 logger = logging.getLogger(__name__)
 
-# Инициализация Redis для кэша (используем БД 1, чтобы не мешать Celery в БД 0)
-# Если в config нет REDIS_CACHE_URL, фоллбек на локальный
 REDIS_CACHE_URL = getattr(config, 'REDIS_CACHE_URL', 'redis://localhost:6379/1')
 cache_redis = redis.from_url(REDIS_CACHE_URL, decode_responses=True)
 
@@ -34,10 +31,13 @@ profile_bp = Blueprint("profile", __name__)
 
 @profile_bp.route("/viewProfile", methods=["GET"])
 def view_profile():
-    """Возвращает страницу профиля пользователя.
+    """Отображает страницу профиля указанного пользователя по его ID.
+
+    Args:
+        user_id (int): ID пользователя из query-параметра `user_id`.
 
     Returns:
-        flask.Response: HTML-страница с профилем пользователя.
+        flask.Response: HTML-страница профиля пользователя.
     """
     user_id: int = request.args.get("user_id")
     with get_db_session() as db_sess:
@@ -45,7 +45,21 @@ def view_profile():
         user = db_sess.query(User).get(user_id)
         if not user:
             abort(404)
-    return render_template("view_profile.html", interest=interest, user=user)
+
+        profile_personality = user.personality_profile
+        schwartz_profile = db_sess.query(UserSchwartzProfile).filter_by(user_id=user_id).first()
+        extracted_interests = db_sess.query(AIExtractedInterests).filter_by(user_id=user_id).first()
+        behavior_profile = db_sess.query(UserBehaviorProfile).filter_by(user_id=user_id).first()
+
+    return render_template(
+        "view_profile.html",
+        interest=interest,
+        user=user,
+        profile_personality=profile_personality,
+        schwartz_profile=schwartz_profile,
+        extracted_interests=extracted_interests,
+        behavior_profile=behavior_profile,
+    )
 
 
 @profile_bp.route("/profile", methods=["GET", "POST"])
@@ -76,22 +90,31 @@ def profile():
             .filter(Interest.id.in_(favorite_ids)).all()
             if favorite_ids else []
         )
+
+        schwartz_profile = db_sess.query(UserSchwartzProfile).filter_by(user_id=current_user.id).first()
+        extracted_interests = db_sess.query(AIExtractedInterests).filter_by(user_id=current_user.id).first()
+
         return render_template(
             "profile.html",
             title="Профиль",
             interest=created_interests,
             favorite_interests=favorite_interests,
-            current_user=current_user
+            current_user=current_user,
+            schwartz_profile=schwartz_profile,
+            extracted_interests=extracted_interests,
         )
 
 
 @profile_bp.route("/upload_avatar", methods=["POST"])
 @login_required
 def upload_avatar():
-    """Загрузка и обработка аватара пользователя.
+    """Загружает, обрезает до квадрата и сжимает аватар пользователя.
+
+    Принимает файл через поле `photo`, конвертирует в WEBP 400x400.
+    Удаляет старый аватар, если он не стандартный.
 
     Returns:
-        flask.Response: JSON с результатом выполнения.
+        flask.Response: JSON с путём к новому аватару или ошибкой.
     """
     if "photo" not in request.files:
         return jsonify({"success": False, "message": "Файл не найден"}), 400
@@ -153,7 +176,7 @@ def upload_avatar():
 @profile_bp.route("/process_profile", methods=["POST"])
 @login_required
 def process_profile():
-    """Обновление данных профиля пользователя из формы.
+    """Обновляет имя, информацию и цели связи пользователя из POST-формы.
 
     Returns:
         flask.Response: Перенаправление на страницу профиля.
@@ -183,10 +206,10 @@ def settings():
 @profile_bp.route("/update_profile", methods=["POST"])
 @login_required
 def update_profile():
-    """Обработка и сохранение изменений профиля через JSON-запрос.
+    """Сохраняет изменения профиля (имя, информация, пароль) через JSON-запрос.
 
     Returns:
-        flask.Response: JSON-ответ о результатах сохранения.
+        flask.Response: JSON с результатом сохранения.
     """
     data = request.json
     with get_db_session() as db_sess:
@@ -211,7 +234,9 @@ def update_profile():
 @profile_bp.route("/knowledge_graph", methods=["GET"])
 @login_required
 def knowledge_graph():
-    """Страница отображения графа знаний пользователя.
+    """Отображает страницу графа знаний текущего пользователя.
+
+    Загружает узлы и связи из БД и передаёт их в шаблон.
 
     Returns:
         flask.Response: HTML-страница с графом знаний.
@@ -260,10 +285,10 @@ def knowledge_graph():
 @profile_bp.route("/knowledge_graph/node", methods=["POST"])
 @login_required
 def create_node():
-    """Создание нового узла графа знаний.
+    """Создаёт новый узел графа знаний для текущего пользователя.
 
     Returns:
-        flask.Response: JSON-ответ с информацией о созданном узле.
+        flask.Response: JSON с данными созданного узла.
     """
     from data.knowledge_graph import KnowledgeNode
 
@@ -293,13 +318,15 @@ def create_node():
 @profile_bp.route("/knowledge_graph/node/<int:node_id>", methods=["PUT", "DELETE"])
 @login_required
 def update_node(node_id):
-    """Обновление или удаление узла графа знаний.
+    """Обновляет поля или удаляет узел графа знаний.
+
+    При DELETE также удаляет все связи узла.
 
     Args:
         node_id (int): ID узла графа.
 
     Returns:
-        flask.Response: JSON-ответ об успешном завершении действия.
+        flask.Response: JSON с результатом операции.
     """
     from data.knowledge_graph import KnowledgeNode, KnowledgeConnection
 
@@ -347,10 +374,12 @@ def update_node(node_id):
 @profile_bp.route("/knowledge_graph/connection", methods=["POST", "DELETE"])
 @login_required
 def manage_connection():
-    """Создание или удаление связи между узлами графа знаний.
+    """Создаёт или удаляет связь между узлами графа знаний.
+
+    POST — создаёт новую связь, DELETE — удаляет существующую по connection_id.
 
     Returns:
-        flask.Response: JSON-ответ с результатом.
+        flask.Response: JSON с результатом операции.
     """
     from data.knowledge_graph import KnowledgeNode, KnowledgeConnection
 
@@ -414,10 +443,10 @@ def manage_connection():
 @profile_bp.route("/knowledge_graph_data")
 @login_required
 def get_graph_data():
-    """Возвращает JSON-структуру графа знаний пользователя.
+    """Возвращает JSON-структуру графа знаний текущего пользователя.
 
     Returns:
-        flask.Response: JSON с массивом узлов и связей графа.
+        flask.Response: JSON с массивами узлов и связей.
     """
     with get_db_session() as db_sess:
         nodes_db = db_sess.query(KnowledgeNode).filter(
@@ -469,15 +498,13 @@ CATEGORY_CONFIG = {
 
 
 def _serialize_extracted_interests(row: AIExtractedInterests) -> dict:
-    """
-    ORM-строка AIExtractedInterests -> dict в формате, который понимает
-    AIProfiler.calculate_hybrid_matching_score / _extract_tag_set.
+    """Преобразует ORM-строку AIExtractedInterests в плоский словарь для скоринга.
 
-    "semantic_categories" и "extraction_method" — новые JSON-колонки, добавленные
-    вместе с ZeroShotInterestExtractor/CustomInterestClassifier. Для старых строк
-    (созданных до внедрения) они могут быть NULL — _extract_tag_set в core.py
-    сам делает fallback на hobbies/skills/topics в этом случае, так что здесь
-    достаточно отдать None/пустой dict, ничего дополнительно обрабатывать не нужно.
+    Args:
+        row: ORM-объект с извлечёнными интересами пользователя.
+
+    Returns:
+        Словарь с полями hobbies, topics, skills, occupation, semantic_categories.
     """
     return {
         "hobbies": row.hobbies or [],
@@ -490,6 +517,14 @@ def _serialize_extracted_interests(row: AIExtractedInterests) -> dict:
 
 
 def _ocean_vector(profile: UserPersonalityProfile | None) -> list[float] | None:
+    """Извлекает вектор OCEAN из профиля личности.
+
+    Args:
+        profile: Профиль личности пользователя.
+
+    Returns:
+        Список из 5 значений OCEAN или None, если профиль отсутствует.
+    """
     if profile is None:
         return None
     return [
@@ -502,23 +537,23 @@ def _ocean_vector(profile: UserPersonalityProfile | None) -> list[float] | None:
 
 
 def _get_related_node_ids(db_sess, target_node_id: int) -> list[int]:
-    """
-    Get target node ID plus all its parent and child node IDs.
-    
-    This determines the scope of the search: direct match + related hierarchy.
-    
-    Returns: list of InterestHierarchyNode IDs
+    """Собирает ID целевого узла иерархии и всех его родительских и дочерних узлов.
+
+    Args:
+        db_sess: Сессия SQLAlchemy.
+        target_node_id: ID узла InterestHierarchyNode.
+
+    Returns:
+        Список ID узлов (целевой + родители + потомки).
     """
     from data.interest_hierarchy import InterestHierarchyNode
     
     related_ids = {target_node_id}
     
-    # Get target node
     target = db_sess.query(InterestHierarchyNode).filter_by(id=target_node_id).first()
     if not target:
         return list(related_ids)
     
-    # Add all parent nodes
     current = target
     while current.parent_id:
         related_ids.add(current.parent_id)
@@ -526,7 +561,6 @@ def _get_related_node_ids(db_sess, target_node_id: int) -> list[int]:
         if not current:
             break
     
-    # Add all child nodes (recursive)
     def _add_children(node_id: int):
         children = db_sess.query(InterestHierarchyNode).filter_by(parent_id=node_id).all()
         for child in children:
@@ -539,18 +573,13 @@ def _get_related_node_ids(db_sess, target_node_id: int) -> list[int]:
 
 
 def _build_hierarchy_cache(db_sess) -> dict:
-    """
-    Pre-load entire interest hierarchy into memory for O(1) lookups during scoring.
-    
-    Returns: {node_id: {
-        'slug': str,
-        'depth': int,
-        'parent_id': int | None,
-        'match_weight': float,
-        'name': str
-    }, ...}
-    
-    This cache eliminates all DB lookups in the scoring loop.
+    """Загружает всю иерархию интересов в память для O(1)-доступа при скоринге.
+
+    Args:
+        db_sess: Сессия SQLAlchemy.
+
+    Returns:
+        Словарь {node_id: {slug, depth, parent_id, match_weight, name}}.
     """
     from data.interest_hierarchy import InterestHierarchyNode
     
@@ -566,7 +595,6 @@ def _build_hierarchy_cache(db_sess) -> dict:
             'name': node.name,
         }
     
-    logger.debug(f"[_build_hierarchy_cache] Cached {len(cache)} nodes")
     return cache
 
 
@@ -575,25 +603,24 @@ def _calculate_graph_interest_score(
     matched_weights_dict: dict,
     hierarchy_cache: dict,
 ) -> tuple[float, list[str]]:
-    """
-    Calculate graph interest score with direct/indirect distinction.
-    
-    Direct Match: User's slug exactly matches target_node.slug → coeff = 1.0
-    Indirect Match: User's slug is parent/child of target_node → coeff = 0.4 (with depth penalty)
-    
+    """Вычисляет скоринговый балл пересечения по графу интересов.
+
+    Прямое совпадение (точный slug): coeff = 1.0
+    Косвенное совпадение (родитель/потомок): coeff = 0.4 с понижением за глубину.
+
     Args:
-        target_node: InterestHierarchyNode instance
-        matched_weights_dict: {node_id: weight, ...} - matched nodes for this user
-        hierarchy_cache: pre-loaded hierarchy dict
-    
-    Returns: (score, matched_tags_list)
-        - score: float (0..1)
-        - matched_tags_list: list of matched tag slugs to display
+        target_node: Целевой узел InterestHierarchyNode.
+        matched_weights_dict: {node_id: weight} совпавшие узлы пользователя.
+        hierarchy_cache: Предзагруженный кэш иерархии.
+
+    Returns:
+        Кортеж (score, matched_tags_list): балл совместимости и список тегов.
     """
     if not matched_weights_dict:
         return 0.0, []
     
     score = 0.0
+    max_possible = 0.0
     matched_tags = []
     
     for matched_node_id, weight in matched_weights_dict.items():
@@ -603,23 +630,20 @@ def _calculate_graph_interest_score(
         matched_node_data = hierarchy_cache[matched_node_id]
         matched_slug = matched_node_data['slug']
         
-        # Determine match type (direct vs indirect)
         if matched_node_id == target_node.id:
-            # Direct match: exact node ID
             coeff = 1.0
             score += weight * coeff
             matched_tags.append(f"{matched_slug} (точное)")
         else:
-            # Indirect match: parent or child relationship
-            # Depth penalty: the further apart in hierarchy, the less relevant
             depth_diff = abs(matched_node_data['depth'] - target_node.depth)
-            indirect_coeff = max(0.4 - (0.05 * depth_diff), 0.1)  # Min 0.1, decay with depth
+            coeff = max(0.4 - (0.05 * depth_diff), 0.1)
             
-            score += weight * indirect_coeff
+            score += weight * coeff
             matched_tags.append(f"{matched_slug} (похоже)")
+        max_possible += coeff
     
-    # Normalize score to 0..1 range
-    final_score = min(score, 1.0)
+    final_score = score / max_possible if max_possible > 0 else 0.0
+    final_score = min(final_score, 1.0)
     
     return final_score, matched_tags
 
@@ -627,45 +651,92 @@ def _calculate_graph_interest_score(
 @profile_bp.route("/api/graph/match/<int:node_id>")
 @login_required
 def match_by_node(node_id: int):
-    """
-    Search for the best matching users by graph node (clean architecture).
-    
-    NEW ARCHITECTURE (Write/Read Separation):
-    - WRITE phase (Celery): All user tags are pre-resolved to slugs and stored in user_interest_graph_weights
-    - READ phase (this function): Single SQL query + ultra-fast scoring loop
-    
-    Flow:
-    1. Get target_node from hierarchy (node_id maps to InterestHierarchyNode.id)
-    2. Execute ONE SQL query to fetch all candidates with matching weights
-    3. Pre-load hierarchy cache (slug, depth, parent_id) for scoring
-    4. Loop through candidates, calculate graph_score with direct/indirect distinction
-    5. Return top-10 with non-empty matched_tags
-    
-    Performance: Single SQL query, no N+1 issues, no SBERT calls in read phase.
+    """Ищет наиболее совместимых пользователей по узлу графа интересов.
+
+    READ-фаза: один SQL-запрос + быстрый цикл скоринга.
+    WRITE-фаза (Celery): теги предварительно разрешены в slugs.
+
+    Алгоритм:
+    1. Получить целевой узел из иерархии (или через KnowledgeNode).
+    2. Один SQL-запрос для всех кандидатов с весами.
+    3. Предзагрузить кэш иерархии (slug, depth, parent_id).
+    4. Рассчитать graph_score с прямыми/косвенными совпадениями.
+    5. Смешать с personality_score через root-категорию.
+    6. Вернуть топ-10 результатов.
+
+    Args:
+        node_id: ID узла InterestHierarchyNode (или KnowledgeNode).
+
+    Returns:
+        flask.Response: JSON со списком лучших совпадений.
     """
     from data.interest_hierarchy import InterestHierarchyNode, UserInterestGraphWeight
     from data.user import User as DBUser
-    
+    from app.ai_profiler.dynamic_enrichment import get_tag_enricher
+    from app.ai_profiler.root_personalities import (
+        find_root_category, compute_root_personality_score, ROOT_ARCHETYPES,
+        KNOWLEDGE_CATEGORY_TO_ROOT,
+    )
+
     with get_db_session() as db_sess:
-        # Step 1: Get target hierarchy node
         target_node = db_sess.query(InterestHierarchyNode).filter_by(id=node_id).first()
+        kn_category = None
+
+        if not target_node:
+            knowledge_node = db_sess.query(KnowledgeNode).filter_by(id=node_id).first()
+            if knowledge_node:
+                kn_category = (knowledge_node.category or "").lower()
+                title = knowledge_node.title.lower()
+                try:
+                    enricher = get_tag_enricher()
+                    slug = enricher.resolve_tag_to_slug(db_sess, title, fallback_to_enrichment=False)
+                    if slug:
+                        target_node = db_sess.query(InterestHierarchyNode).filter_by(slug=slug).first()
+                except Exception:
+                    logger.warning(f"[match_by_node] SBERT resolve failed, trying keyword match for '{title}'")
+
+                if not target_node:
+                    from sqlalchemy import or_
+                    fuzzy = db_sess.query(InterestHierarchyNode).filter(
+                        or_(
+                            InterestHierarchyNode.slug.ilike(f"%{title}%"),
+                            InterestHierarchyNode.name.ilike(f"%{title}%"),
+                        )
+                    ).first()
+                    if fuzzy:
+                        target_node = fuzzy
+                        logger.info(f"[match_by_node] Keyword fallback matched node '{title}' -> {target_node.slug}")
+
         if not target_node:
             logger.warning(f"[match_by_node] Node {node_id} not found in hierarchy")
             return jsonify({"error": "Node not found"}), 404
         
         logger.debug(f"[match_by_node] Target node: {target_node.slug} (id={node_id}, depth={target_node.depth})")
         
-        # Step 2: SINGLE SQL query - fetch all candidates with graph weights for target node or its parents/children
-        #
-        # Query finds users who have:
-        # - Direct match: target_node.id
-        # - Parent match: any parent of target_node
-        # - Child match: any child of target_node
+        hierarchy_cache = _build_hierarchy_cache(db_sess)
+
+        if kn_category and kn_category in KNOWLEDGE_CATEGORY_TO_ROOT:
+            root_category = KNOWLEDGE_CATEGORY_TO_ROOT[kn_category]
+        else:
+            root_category = find_root_category(target_node, hierarchy_cache)
+        root_archetype = ROOT_ARCHETYPES.get(root_category, {})
+        personality_blend_weight = config.ROOT_PERSONALITY_BLEND_WEIGHT
+        chain = []
+        cid = target_node.id
+        while cid in hierarchy_cache:
+            chain.append(f"{hierarchy_cache[cid]['slug']}(id={cid})")
+            pid = hierarchy_cache[cid].get("parent_id")
+            if pid is None:
+                break
+            cid = pid
+        logger.info(
+            "[match_by_node] Node %s kn_category=%s → root_category=%s, chain: %s",
+            target_node.slug, kn_category, root_category, " ← ".join(reversed(chain)),
+        )
         
         from sqlalchemy import or_, text
         
-        # Get target node's ancestor and descendant IDs
-        target_and_related_ids = _get_related_node_ids(db_sess, node_id)
+        target_and_related_ids = _get_related_node_ids(db_sess, target_node.id)
         
         candidates_query = db_sess.query(
             UserInterestGraphWeight.user_id,
@@ -685,55 +756,89 @@ def match_by_node(node_id: int):
             logger.debug("[match_by_node] No candidates with graph weights found")
             return jsonify([])
         
-        # Step 3: Pre-load entire hierarchy as cache for O(1) lookups
-        hierarchy_cache = _build_hierarchy_cache(db_sess)
-        
-        # Group candidates by user_id for aggregate scoring
         candidates_by_user = {}
         for row in candidates_query:
             user_id, db_user_id, user_name, node_id_match, weight = row
             if user_id not in candidates_by_user:
                 candidates_by_user[user_id] = {
                     "name": user_name,
-                    "matched_weights": {},  # node_id -> weight
+                    "matched_weights": {},
                 }
             candidates_by_user[user_id]["matched_weights"][node_id_match] = weight
         
         logger.debug(f"[match_by_node] Found {len(candidates_by_user)} unique candidates")
         
-        # Step 4: Calculate scores for each candidate (no DB hits)
+        candidate_user_ids = list(candidates_by_user.keys())
+        personality_profiles = {
+            p.user_id: p
+            for p in db_sess.query(UserPersonalityProfile)
+            .filter(UserPersonalityProfile.user_id.in_(candidate_user_ids))
+            .all()
+        }
+        schwartz_profiles = {
+            s.user_id: s
+            for s in db_sess.query(UserSchwartzProfile)
+            .filter(UserSchwartzProfile.user_id.in_(candidate_user_ids))
+            .all()
+        }
+        logger.info(
+            "[match_by_node] Profiles loaded: %d candidates, %d personality, %d schwartz",
+            len(candidate_user_ids), len(personality_profiles), len(schwartz_profiles),
+        )
+        
         matches = []
         for candidate_user_id, candidate_data in candidates_by_user.items():
             candidate_name = candidate_data["name"]
             matched_weights_dict = candidate_data["matched_weights"]
             
-            # Calculate graph score with direct/indirect distinction
             graph_score, matched_tags = _calculate_graph_interest_score(
                 target_node=target_node,
                 matched_weights_dict=matched_weights_dict,
                 hierarchy_cache=hierarchy_cache,
             )
             
-            # Skip if no relevant tags matched
             if not matched_tags or graph_score < 0.1:
                 continue
+            
+            personality_score = compute_root_personality_score(
+                personality_profile=personality_profiles.get(candidate_user_id),
+                schwartz_profile=schwartz_profiles.get(candidate_user_id),
+                root_category=root_category,
+            )
+            
+            final_score = (
+                (1.0 - personality_blend_weight) * graph_score
+                + personality_blend_weight * personality_score
+            )
+            
+            match_reason = root_archetype.get("match_reason", "Общие интересы")
             
             matches.append({
                 "user_id": candidate_user_id,
                 "user_name": candidate_name,
-                "compatibility": round(graph_score * 100, 1),
-                "match_reason": "Общие интересы",
+                "compatibility": round(final_score * 100, 1),
+                "match_reason": match_reason,
                 "matched_tags": matched_tags,
+                "root_category": root_category,
                 "score_breakdown": {
                     "graph_interest": round(graph_score, 3),
+                    "personality_fit": round(personality_score, 3),
+                    "blend_weight": personality_blend_weight,
                 },
             })
         
-        # Step 5: Sort and return top-10
         matches.sort(key=lambda x: x["compatibility"], reverse=True)
         top_matches = matches[:10]
         
-        logger.info(f"[match_by_node] Returning {len(top_matches)} matches for node {node_id}")
+        if top_matches:
+            logger.info(
+                "[match_by_node] Top match: user=%s graph=%.3f personality=%.3f final=%.1f%%",
+                top_matches[0]["user_name"],
+                top_matches[0]["score_breakdown"]["graph_interest"],
+                top_matches[0]["score_breakdown"]["personality_fit"],
+                top_matches[0]["compatibility"],
+            )
+        logger.info("[match_by_node] Returning %d matches for node %d", len(top_matches), node_id)
         return jsonify(top_matches)
 
 
@@ -741,9 +846,13 @@ def match_by_node(node_id: int):
 @profile_bp.route("/api/graph/report/<int:target_user_id>")
 @login_required
 def get_match_report(target_user_id):
-    """
-    Эндпоинт ленивой загрузки AI-отчета.
-    Кэширует результат в Redis.
+    """Эндпоинт ленивой загрузки AI-отчёта о совместимости с кэшированием в Redis.
+
+    Args:
+        target_user_id: ID целевого пользователя для сравнения.
+
+    Returns:
+        flask.Response: JSON с текстом отчёта и флагом кэширования.
     """
     node_id = request.args.get('node_id', type=int)
 
@@ -758,8 +867,6 @@ def get_match_report(target_user_id):
         if not target_user:
             return jsonify({"error": "User not found"}), 404
 
-        # ИСПРАВЛЕНО: Вытаскиваем название узла, на который кликнул пользователь,
-        # чтобы передать его как matched_tags вместо пустого списка.
         matched_tags = []
         if node_id:
             node = db_sess.query(KnowledgeNode).get(node_id)
@@ -767,8 +874,6 @@ def get_match_report(target_user_id):
                 matched_tags.append(node.title)
 
         try:
-            # ИСПРАВЛЕНО: use_llm=None, чтобы функция match_report сама взяла
-            # актуальное значение config.OLLAMA_ENABLED, не ломаясь об getattr
             report = generate_match_report(
                 current_user.id,
                 target_user_id,

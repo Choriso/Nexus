@@ -74,8 +74,16 @@
                                 <span class="meta-value">{{ current_user.personality_profile.communication_style|capitalize or 'Стандартный' }}</span>
                             </div>
                             <div class="meta-row">
+                                <span class="label-muted">Сотрудничество:</span>
+                                <span class="meta-value">{{ (current_user.personality_profile.collaboration_style or 'Стандартный')|capitalize }}</span>
+                            </div>
+                            <div class="meta-row">
                                 <span class="label-muted">Энтузиазм:</span>
                                 <span class="meta-value">{{ (current_user.personality_profile.enthusiasm * 100)|round|int }}%</span>
+                            </div>
+                            <div class="meta-row">
+                                <span class="label-muted">Формальность:</span>
+                                <span class="meta-value">{{ (current_user.personality_profile.formality * 100)|round|int }}%</span>
                             </div>
                         </div>
                         {% else %}
@@ -94,6 +102,80 @@
 
             </div>
         </div>
+
+        {% set schwartz_map = {
+            'self_direction': 'Самостоятельность', 'stimulation': 'Стимуляция',
+            'hedonism': 'Гедонизм', 'achievement': 'Достижения',
+            'power': 'Власть', 'security': 'Безопасность',
+            'conformity': 'Конформность', 'tradition': 'Традиции',
+            'benevolence': 'Доброта', 'universalism': 'Универсализм',
+        } %}
+        {% if schwartz_profile %}
+        <div class="profile-section-card">
+            <h3 class="section-title">Ценности (Шварц)</h3>
+            {% set sw = schwartz_profile %}
+            {% set sw_items = [] %}
+            {% for key, label in schwartz_map.items() %}
+                {% set _ = sw_items.append({'label': label, 'value': sw[key]}) %}
+            {% endfor %}
+            {% set sw_sorted = sw_items|sort(attribute='value', reverse=true) %}
+            <div class="schwartz-bars">
+            {% for item in sw_sorted[:5] %}
+                <div class="schwartz-bar-row">
+                    <span class="schwartz-bar-label">{{ item.label }}</span>
+                    <div class="schwartz-bar-track">
+                        <div class="schwartz-bar-fill" style="width: {{ item.value * 100 }}%"></div>
+                    </div>
+                    <span class="schwartz-bar-value">{{ (item.value * 100)|round|int }}%</span>
+                </div>
+            {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if extracted_interests %}
+        <div class="profile-section-card">
+            <h3 class="section-title">AI-извлечённые интересы</h3>
+            <div class="psymetric-block">
+                {% if extracted_interests.hobbies %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Хобби</span>
+                    <span class="meta-value">{{ extracted_interests.hobbies|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.skills %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Навыки</span>
+                    <span class="meta-value">{{ extracted_interests.skills|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.topics %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Темы</span>
+                    <span class="meta-value">{{ extracted_interests.topics|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.short_term_goals %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Ближайшие цели</span>
+                    <span class="meta-value">{{ extracted_interests.short_term_goals|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.long_term_goals %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Долгосрочные цели</span>
+                    <span class="meta-value">{{ extracted_interests.long_term_goals|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.occupation %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Профессия</span>
+                    <span class="meta-value">{{ extracted_interests.occupation }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
 
         <div class="profile-actions-footer">
             <a href="/settings" class="btn-primary">Настройки</a>
@@ -257,6 +339,15 @@
         border-radius: var(--radius-lg);
         border: 1px solid var(--color-border-subtle);
     }
+    .psymetric-block { margin-top: var(--space-3); }
+    .psymetric-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--space-2); }
+    .meta-value { font-weight: 600; font-size: 14px; color: var(--color-text); }
+    .schwartz-bars { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+    .schwartz-bar-row { display: flex; align-items: center; gap: var(--space-2); }
+    .schwartz-bar-label { width: 130px; font-size: var(--font-size-xs); color: var(--color-text-soft); }
+    .schwartz-bar-track { flex: 1; height: 6px; background: var(--color-surface); border-radius: 3px; overflow: hidden; }
+    .schwartz-bar-fill { height: 100%; background: var(--color-accent); border-radius: 3px; }
+    .schwartz-bar-value { width: 35px; text-align: right; font-size: var(--font-size-xs); color: var(--color-text-muted); }
 
     .profile-interests-grid {
         display: grid;

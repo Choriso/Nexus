@@ -27,6 +27,11 @@ class User(SqlAlchemyBase, UserMixin):
     allow_location = sqlalchemy.Column(sqlalchemy.Boolean, default=False)
     is_moderator = sqlalchemy.Column(sqlalchemy.Boolean, default=False)
 
+    # Персональные смещения весов метрик для двухконтурного поиска (Block 2)
+    metric_weight_ocean_offset = sqlalchemy.Column(sqlalchemy.Float, default=0.0)
+    metric_weight_graph_offset = sqlalchemy.Column(sqlalchemy.Float, default=0.0)
+    metric_weight_jaccard_offset = sqlalchemy.Column(sqlalchemy.Float, default=0.0)
+
     interests = orm.relationship("Interest", back_populates='user')
     messages = orm.relationship("Message", back_populates="author")
     personality_profile = orm.relationship("UserPersonalityProfile", backref="user", uselist=False, lazy='joined')

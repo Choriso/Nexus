@@ -1,21 +1,56 @@
 @import url("https://fonts.googleapis.com/css?family=Geist+Mono&display=swap");
 
 :root {
+  /* ─── Surfaces & backgrounds ─── */
   --color-bg: #2b2e31;
+  --color-bg-deep: #1b1b20;
   --color-panel: #3C4044;
   --color-surface: #3C4044;
-  --color-search-panel: #3C4044;
+  --color-card: #242629;
+  --color-card-hover: #2a2d33;
+  --color-overlay: rgba(0,0,0,0.8);
 
+  /* ─── Text ─── */
   --color-text: #DDDCDB;
-  --color-text-muted: #999999;
-  --color-text-soft: #d1d7dd;
+  --color-text-heading: #fffffe;
+  --color-text-bright: #fffffe;
+  --color-text-soft: #94a1b2;
+  --color-text-muted: #6b7080;
+  --color-text-secondary: #999999;
 
+  /* ─── Borders ─── */
   --color-border-subtle: rgba(255, 255, 255, 0.2);
+  --color-border-soft: rgba(255, 255, 255, 0.06);
   --color-border-strong: rgba(255, 255, 255, 1);
+  --color-border-panel: #333842;
+  --color-border-card: #333842;
 
+  /* ─── Accents ─── */
   --color-primary: #4a90e2;
   --color-accent: #FD7B41;
+  --color-accent-purple: #7f5af0;
+  --color-accent-purple-glow: rgba(127, 90, 240, 0.5);
+  --color-accent-purple-bg: rgba(127, 90, 240, 0.12);
+
+  /* ─── Semantic ─── */
+  --color-success: #2cb67d;
+  --color-success-bg: rgba(44, 182, 125, 0.12);
+  --color-success-border: rgba(44, 182, 125, 0.25);
+  --color-danger: #e53935;
+  --color-danger-bg: rgba(229, 57, 53, 0.12);
   --color-warning: #ffa500;
+
+  /* ─── AI / Button extras ─── */
+  --color-ai-text: #c5b8f0;
+  --color-toast-text: #c0c4d0;
+
+  /* ─── Graph nodes ─── */
+  --color-node-stroke: #444b5a;
+  --color-node-text: #94a1b2;
+
+  /* ─── Modal ─── */
+  --color-modal-bg: #242629;
+  --color-modal-border: #7f5af0;
 
   /* Radii */
   --radius-0: 6px;
@@ -36,6 +71,7 @@
 
   /* Typography */
   --font-sans: "Geist Mono", GeistMono, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans-alt: "Inter", system-ui, sans-serif;
   --font-size-xs: 11px;
   --font-size-sm: 13px;
   --font-size-md: 16px;
@@ -46,5 +82,7 @@
 
   /* Shadows */
   --shadow-soft: 0 8px 16px rgba(0, 0, 0, 0.3);
+  --shadow-graph: 0 10px 30px rgba(0,0,0,0.5);
+  --shadow-toast: 0 8px 32px rgba(0,0,0,0.6);
 }
 

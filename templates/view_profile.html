@@ -43,6 +43,126 @@
             <div id="map" class="map-container"></div>
         </div>
 
+        {% if profile_personality or schwartz_profile or extracted_interests %}
+        <div class="profile-section-card">
+            <h3 class="section-title">Психологический профиль</h3>
+
+            {% if profile_personality %}
+            <div class="psymetric-block">
+                <div class="psymetric-row">
+                    <span class="label-muted">Тип личности (MBTI)</span>
+                    <span class="meta-value">{{ profile_personality.mbti_type or 'В анализе...' }}</span>
+                </div>
+                <div class="psymetric-row">
+                    <span class="label-muted">Стиль общения</span>
+                    <span class="meta-value">{{ (profile_personality.communication_style or 'Стандартный')|capitalize }}</span>
+                </div>
+                <div class="psymetric-row">
+                    <span class="label-muted">Сотрудничество</span>
+                    <span class="meta-value">{{ (profile_personality.collaboration_style or 'Стандартный')|capitalize }}</span>
+                </div>
+                <div class="psymetric-row">
+                    <span class="label-muted">Энтузиазм</span>
+                    <span class="meta-value">{{ (profile_personality.enthusiasm * 100)|round|int }}%</span>
+                </div>
+                {% set ocean_traits = {
+                    'Открытость': profile_personality.openness,
+                    'Добросовестность': profile_personality.conscientiousness,
+                    'Экстраверсия': profile_personality.extraversion,
+                    'Доброжелательность': profile_personality.agreeableness,
+                    'Нейротизм': profile_personality.neuroticism,
+                } %}
+                {% set sorted_ocean = ocean_traits|dictsort(by='value', reverse=true) %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Ключевые черты</span>
+                    <span class="meta-value">
+                        {% for trait, val in sorted_ocean[:2] %}
+                            {{ trait }} ({{ (val * 100)|round|int }}%){% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </span>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if schwartz_profile %}
+            <div class="psymetric-block">
+                <h4 class="psymetric-subtitle">Ценности (Шварц)</h4>
+                {% set schwartz_map = {
+                    'self_direction': 'Самостоятельность', 'stimulation': 'Стимуляция',
+                    'hedonism': 'Гедонизм', 'achievement': 'Достижения',
+                    'power': 'Власть', 'security': 'Безопасность',
+                    'conformity': 'Конформность', 'tradition': 'Традиции',
+                    'benevolence': 'Доброта', 'universalism': 'Универсализм',
+                } %}
+                {% set schwartz_vals = [] %}
+                {% for key, label in schwartz_map.items() %}
+                    {% set val = schwartz_profile[key] if schwartz_profile[key] is defined else 0.5 %}
+                    {% set _ = schwartz_vals.append({'label': label, 'value': val}) %}
+                {% endfor %}
+                {% set sorted_schwartz = schwartz_vals|sort(attribute='value', reverse=true) %}
+                <div class="schwartz-bars">
+                {% for item in sorted_schwartz[:5] %}
+                    <div class="schwartz-bar-row">
+                        <span class="schwartz-bar-label">{{ item.label }}</span>
+                        <div class="schwartz-bar-track">
+                            <div class="schwartz-bar-fill" style="width: {{ item.value * 100 }}%"></div>
+                        </div>
+                        <span class="schwartz-bar-value">{{ (item.value * 100)|round|int }}%</span>
+                    </div>
+                {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% if extracted_interests %}
+            <div class="psymetric-block">
+                {% if extracted_interests.hobbies %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Хобби</span>
+                    <span class="meta-value">{{ extracted_interests.hobbies|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.skills %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Навыки</span>
+                    <span class="meta-value">{{ extracted_interests.skills|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.topics %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Интересы</span>
+                    <span class="meta-value">{{ extracted_interests.topics|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.short_term_goals %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Ближайшие цели</span>
+                    <span class="meta-value">{{ extracted_interests.short_term_goals|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.long_term_goals %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Долгосрочные цели</span>
+                    <span class="meta-value">{{ extracted_interests.long_term_goals|join(', ') }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.occupation %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Профессия</span>
+                    <span class="meta-value">{{ extracted_interests.occupation }}</span>
+                </div>
+                {% endif %}
+                {% if extracted_interests.work_style %}
+                <div class="psymetric-row">
+                    <span class="label-muted">Стиль работы</span>
+                    <span class="meta-value">{{ extracted_interests.work_style }}</span>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
         <div class="profile-section-card">
             <h3 class="section-title">Интересы пользователя</h3>
             <div class="view-interests-grid">
@@ -69,6 +189,30 @@
 </div>
 
 <style>
+    .psymetric-block {
+        margin-top: var(--space-4);
+        padding-top: var(--space-4);
+        border-top: 1px solid var(--color-border-subtle);
+    }
+    .psymetric-block:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+    .psymetric-subtitle {
+        font-size: var(--font-size-sm);
+        color: var(--color-text-soft);
+        margin: 0 0 var(--space-3) 0;
+    }
+    .psymetric-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: var(--space-2);
+    }
+    .schwartz-bars { display: flex; flex-direction: column; gap: var(--space-2); }
+    .schwartz-bar-row { display: flex; align-items: center; gap: var(--space-2); }
+    .schwartz-bar-label { width: 130px; font-size: var(--font-size-xs); color: var(--color-text-soft); }
+    .schwartz-bar-track { flex: 1; height: 6px; background: var(--color-surface); border-radius: 3px; overflow: hidden; }
+    .schwartz-bar-fill { height: 100%; background: var(--color-accent); border-radius: 3px; }
+    .schwartz-bar-value { width: 35px; text-align: right; font-size: var(--font-size-xs); color: var(--color-text-muted); }
+    .meta-value { font-weight: 600; font-size: 14px; color: var(--color-text); }
     /* Стили дополняют твой base.css и переменные */
     .profile-section-card {
         background: var(--color-panel);

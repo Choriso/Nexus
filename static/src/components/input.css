@@ -17,8 +17,8 @@
 }
 
 .ui-input:focus {
-  border-color: rgba(74, 144, 226, 0.9);
-  box-shadow: 0 0 0 1px rgba(74, 144, 226, 0.85);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
 }
 
 .search-input {
