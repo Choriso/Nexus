@@ -102,7 +102,6 @@ class Config:
     SEED_DB_PORT: str = os.environ.get("SEED_DB_PORT", "5432")
 
     # Настройки AI/ML
-    ANTHROPIC_API_KEY: str | None = os.environ.get("ANTHROPIC_API_KEY")
     USE_LOCAL_AI_MODELS: bool = _env_bool("USE_LOCAL_AI_MODELS", "False")
     EMBEDDING_MODEL: str = os.environ.get(
         "EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2"
@@ -158,7 +157,7 @@ class Config:
     # Локальная LLM (Ollama) для мини-докладов о совпадениях
     OLLAMA_ENABLED: bool = _env_bool("OLLAMA_ENABLED", "False")
     OLLAMA_BASE_URL: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.environ.get("OLLAMA_MODEL", "phi3:medium")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b-instruct-q4_K_M")
     OLLAMA_TIMEOUT: int = _env_int("OLLAMA_TIMEOUT", 90)
     MATCH_REPORT_LLM_LIMIT: int = _env_int("MATCH_REPORT_LLM_LIMIT", 5)
 

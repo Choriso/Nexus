@@ -12,7 +12,6 @@ from werkzeug.utils import secure_filename
 import uuid
 from PIL import Image
 from app.ai.match_report import generate_match_report
-from app.ai.matching_engine import calculate_multidimensional_compatibility
 from app.ai_profiler.contextual_adapter import get_contextual_adapter
 from config import config
 import redis

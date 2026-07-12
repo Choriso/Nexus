@@ -1,93 +1,86 @@
-"""Seed базы данных PostgreSQL для разработки с учетом новой архитектуры ИИ."""
+"""Seed базы данных PostgreSQL с гарантированно резолвимыми тегами."""
 import os
 import sys
+import json
+import random
+import psycopg2
+from faker import Faker
 
-# Определяем путь к папке, в которой лежит текущий скрипт (tools), и берем её родительскую директорию (Nexus)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-import json
-import random
-import sys
-import psycopg2
-from faker import Faker
-
 from config import config
 from data.session import global_init, create_session
 from data.user import User
-
-# Импортируем ТОЛЬКО после настройки путей
-from app.ai.personality_analyzer import analyze_user_profile
 from app.ai_profiler.interest_graph import register_user_tags, ensure_hierarchy_seeded
 
 DB_CONFIG = config.seed_db_config()
 fake = Faker(["ru_RU"])
 
+# Архетипы с ТОЧНО резолвимыми тегами (те, что есть в CANONICAL_SLUG_FIXES или _HIERARCHY_SEED)
+# Архетипы с ИМЕНАМИ ИЗ _HIERARCHY_SEED (display_name), которые точно есть в базе
+# Архетипы с РЕАЛЬНЫМИ СЛАГАМИ из _HIERARCHY_SEED
 ARCHETYPES = {
     "Профи": {
         "msgs": [
-            "Нам нужно декомпозировать эти сложные задачи на спринты и выставить эстимейты.",
-            "Кодстайл сильно хромает, нужно обязательно поправить отступы и импорты.",
-            "Я внимательно изучил техническую документацию, там явно есть баг в деплой API.",
-            "Необходимо провести качественный рефакторинг этого микросервиса на бэкенде."
+            "Декомпозируем задачи на спринты, нужны эстимейты.",
+            "Кодстайл хромает, поправьте отступы.",
+            "Техническая документация – баг в деплой API.",
+            "Рефакторинг микросервиса на бэкенде.",
         ],
         "cat": "work",
-        # ЯВНЫЕ теги для графа интересов
-        "graph_tags": ["разработка", "python", "backend", "архитектура"]
+        # Реальные слаги из _HIERARCHY_SEED
+        "tags": ["it_development", "backend_python", "python_flask", "api_design", "databases"]
     },
     "Душа компании": {
         "msgs": [
-            "Привет! Как ваши дела? Погнали завтра все вместе на крутой IT-митап!",
-            "Обожаю пробовать новые фреймворки и библиотеки, это всегда так весело и интересно!",
-            "Давайте соберемся всей нашей дружной командой в пятницу вечером в баре!",
-            "Вау, это просто потрясающая новость! Вы все такие классные, обожаю наш чат!"
+            "Привет! Как дела? Идём на IT-митап!",
+            "Обожаю новые фреймворки, это весело!",
+            "Соберёмся командой в баре в пятницу!",
+            "Вау, вы классные, обожаю наш чат!",
         ],
         "cat": "psychology",
-        "graph_tags": ["общение", "психология", "soft skills", "лидерство"]
+        "tags": ["psychology_relations", "soft_skills_empathy", "emotional_intelligence", "networking"]
     },
     "Творец": {
         "msgs": [
-            "Я тут придумал совершенно безумную, но очень красивую идею для нового UI/UX дизайна...",
-            "А что если нам полностью заменить текущий бэкенд и переписать критические узлы на Rust?",
-            "Вдохновение пришло сегодня глубокой ночью, сразу набросал свежий концепт в Figma.",
-            "Искусство должно вдохновлять, поэтому я добавил несколько неоновых элементов в интерфейс."
+            "Придумал безумную идею для UI/UX дизайна...",
+            "А что если переписать бэкенд на Rust?",
+            "Набросал свежий концепт в Figma.",
+            "Искусство должно вдохновлять.",
         ],
         "cat": "hobby",
-        "graph_tags": ["дизайн", "figma", "творчество", "искусство", "3d-моделирование"]
+        "tags": ["creativity_art", "digital_art", "figma_tool", "graphic_design", "3d_modeling_game"]
     },
     "Скейтер/Геймер": {
         "msgs": [
-            "Го катку в CS2 прямо сейчас? Я как раз создал отличный приватный сервер для своих.",
-            "Вчера выбил невероятно редкий и дорогой скин из нового кейса, зацените скриншот!",
-            "Кто-то сталкивался с такой проблемой, как полностью убрать внезапные лаги в Steam?",
-            "Мы вчера с пацанами катали три на два, было очень потно, но мы затащили этот раунд!"
+            "Го катку в CS2 прямо сейчас!",
+            "Выбил редкий скин, зацените!",
+            "Кто сталкивался с лагами в Steam?",
+            "Мы вчера катали три на два, затащили!",
         ],
         "cat": "hobby",
-        "graph_tags": ["игры", "cs2", "гейминг", "киберспорт"]
+        "tags": ["gaming", "cs2_game", "cybersport", "dota2_game", "valorant_game"]
     },
 }
 
-TOPICS = {
-    "work": ["Python", "Flask", "PostgreSQL", "Архитектура", "Deployment"],
-    "hobby": ["3D Modeling", "Blender", "CS2", "Unity", "Digital Art"],
-    "psychology": ["Эмпатия", "Тайм-менеджмент", "Лидерство", "Медитация", "Soft Skills"],
-}
-
-
 def run_mega_seed(num_users: int = 10) -> None:
     if not DB_CONFIG["password"]:
-        print("❌ Error: defina SEED_DB_PASSWORD...", file=sys.stderr)
+        print("❌ Error: SEED_DB_PASSWORD не задан")
         sys.exit(1)
 
     global_init(config.DATABASE_URL)
 
-    # 🔥 Создаём иерархию ОДИН раз до всех регистраций
+    # Инициализируем иерархию графа (если ещё не)
     session = create_session()
     try:
         ensure_hierarchy_seeded(session)
         session.commit()
-        print("✅ Иерархия графа интересов создана/проверена")
+        print("✅ Иерархия графа проверена")
+    except Exception as e:
+        session.rollback()
+        print(f"⚠️ Ошибка иерархии: {e}")
     finally:
         session.close()
 
@@ -96,9 +89,9 @@ def run_mega_seed(num_users: int = 10) -> None:
         conn = psycopg2.connect(**DB_CONFIG)
         conn.autocommit = True
         cur = conn.cursor()
-        print("--- 🚀 Запуск генерации цифровых личностей... ---")
+        print("--- 🚀 Генерация новых профилей ---")
 
-        # Создаём дефолтного пользователя ID=1
+        # Убедимся, что есть пользователь ID=1
         session = create_session()
         my_user = session.query(User).filter(User.id == 1).first()
         if not my_user:
@@ -116,74 +109,80 @@ def run_mega_seed(num_users: int = 10) -> None:
             email = fake.unique.email()
             pwd = "scrypt:32768:8:1$fake_hash_value"
 
+            # 1. Пользователь
             cur.execute(
                 "INSERT INTO users (name, email, hashed_password) VALUES (%s, %s, %s) RETURNING id",
                 (full_name, email, pwd),
             )
             u_id = cur.fetchone()[0]
-            print(f"\n👤 Пользователь ID={u_id}: {full_name}")
+            print(f"\n👤 ID={u_id} {full_name}")
 
-            # Ноды знаний
+            # 2. Knowledge nodes (необязательно, но для фронтенда)
             category = arch_data["cat"]
-            tags = random.sample(TOPICS[category], min(3, len(TOPICS[category])))
+            tags = arch_data["tags"][:3]  # первые 3 тега для узлов
             for tag in tags:
                 x, y = random.uniform(100, 800), random.uniform(100, 600)
                 cur.execute(
-                    "INSERT INTO knowledge_nodes (user_id, title, description, category, x, y) VALUES (%s, %s, %s, %s, %s, %s)",
+                    """INSERT INTO knowledge_nodes (user_id, title, description, category, x, y)
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
                     (u_id, tag, f"Интерес к {tag}", category, x, y),
                 )
 
-            # Чат
+            # 3. Чат с ID=1
             cur.execute(
                 "INSERT INTO chats (user1_id, user2_id) VALUES (%s, %s) RETURNING id",
                 (1, u_id),
             )
             chat_id = cur.fetchone()[0]
 
-            # Сообщения
+            # 4. Сообщения
             for msg_content in arch_data["msgs"]:
                 cur.execute(
                     "INSERT INTO messages (chat_id, author_id, content, message_type) VALUES (%s, %s, %s, %s)",
                     (chat_id, u_id, msg_content, "text"),
                 )
 
-            # ai_extracted_interests
-            graph_tags = arch_data.get("graph_tags", tags)
-            graph_tags_json = json.dumps(graph_tags)
+            # 5. AIExtractedInterests с гарантированно резолвимыми тегами
+            resolved_tags = arch_data["tags"]  # они точно зарезолвятся
+            hobbies_json = json.dumps(resolved_tags)
+            topics_json = json.dumps(resolved_tags[:2])  # немного для topics
+            skills_json = json.dumps(resolved_tags[:2])
             cur.execute(
-                """
-                INSERT INTO ai_extracted_interests (user_id, hobbies, topics, skills, dislikes, last_extraction)
-                VALUES (%s, %s, %s, '[]', '[]', NOW())
-                ON CONFLICT (user_id) DO UPDATE SET hobbies = EXCLUDED.hobbies, topics = EXCLUDED.topics, last_extraction = NOW()
-                """,
-                (u_id, graph_tags_json, graph_tags_json)
+                """INSERT INTO ai_extracted_interests (user_id, hobbies, topics, skills, dislikes, last_extraction)
+                   VALUES (%s, %s, %s, %s, '[]', NOW())
+                   ON CONFLICT (user_id) DO UPDATE SET
+                       hobbies = EXCLUDED.hobbies,
+                       topics = EXCLUDED.topics,
+                       skills = EXCLUDED.skills,
+                       last_extraction = NOW()""",
+                (u_id, hobbies_json, topics_json, skills_json),
             )
 
-            # 🔥 Регистрируем теги в графе (в одной сессии)
+            # 6. РЕГИСТРАЦИЯ ВЕСОВ В ГРАФЕ (самое важное!)
             session = create_session()
             try:
-                register_user_tags(session, u_id, graph_tags)
+                register_user_tags(session, u_id, resolved_tags)
                 session.commit()
-
-                # Проверяем, что записалось
                 from data.interest_hierarchy import UserInterestGraphWeight
                 count = session.query(UserInterestGraphWeight).filter_by(user_id=u_id).count()
-                print(f"   ✅ Зарегистрировано {count} весов для тегов: {graph_tags}")
+                print(f"   ✅ Зарегистрировано {count} весов")
             except Exception as e:
                 session.rollback()
-                print(f"   ⚠️ Ошибка регистрации: {e}")
+                print(f"   ⚠️ Ошибка регистрации весов: {e}")
             finally:
                 session.close()
 
-            # ИИ-анализ (опционально)
-            try:
-                analysis_result = analyze_user_profile.apply(args=[u_id], kwargs={"force": True}).result
-                if isinstance(analysis_result, dict):
-                    print(f"   🧠 MBTI: {analysis_result.get('mbti_type', 'N/A')}")
-            except Exception as e:
-                print(f"   ⚠️ Ошибка анализа: {e}")
+            # 7. Опционально: AI анализ личности (может быть медленно, можно закомментировать)
+            # print(f"   🧠 Запуск AI анализа...")
+            # try:
+            #     from app.ai.personality_analyzer import analyze_user_profile
+            #     result = analyze_user_profile.apply(args=[u_id], kwargs={"force": True}).result
+            #     if isinstance(result, dict) and "error" not in result:
+            #         print(f"   ✅ MBTI: {result.get('mbti_type')}")
+            # except Exception as e:
+            #     print(f"   ⚠️ Ошибка анализа: {e}")
 
-        print("\n✅ СИДИНГ ЗАВЕРШЕН!")
+        print("\n--- ✅ СИД ГОТОВ ---")
 
     except Exception as e:
         print(f"❌ Ошибка: {e}")
@@ -193,7 +192,5 @@ def run_mega_seed(num_users: int = 10) -> None:
         if conn:
             conn.close()
 
-
 if __name__ == "__main__":
-    # Генерируем 10 продвинутых профилей
     run_mega_seed(10)

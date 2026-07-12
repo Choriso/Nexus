@@ -266,7 +266,7 @@ def update_compatibility(self, user_id: int) -> dict:
     db = self.db
     try:
         my = db.query(UserPersonalityProfile).filter_by(user_id=user_id).first()
-        if not my or not my.embedding:
+        if not my or my.embedding is None:
             return {"error": "My profile or embedding not found"}
 
         # 1. Используем pgvector для расчета расстояний прямо в запросе.
