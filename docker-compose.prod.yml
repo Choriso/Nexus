@@ -10,7 +10,7 @@ services:
 
   db:
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?Error: POSTGRES_PASSWORD is required in production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD обязателен в production}
 
   nginx:
     volumes:

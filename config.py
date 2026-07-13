@@ -71,6 +71,18 @@ def _join_path(base: str, filename: str) -> str:
     return os.path.normpath(os.path.join(base, filename))
 
 
+def _build_db_url(user: str | None, password: str | None, host: str, port: str, db: str) -> str:
+    """
+    Собирает URL для подключения к PostgreSQL из отдельных компонентов.
+    Пароль автоматически URL-кодируется, чтобы избежать проблем со спецсимволами (@ и т.д.).
+    """
+    import urllib.parse
+    if not user or not password:
+        return f"sqlite:///ai_profiler.db"
+    encoded_password = urllib.parse.quote(password, safe="")
+    return f"postgresql://{user}:{encoded_password}@{host}:{port}/{db}"
+
+
 class Config:
     """
     Базовая конфигурация приложения, включая настройки Flask, базы данных, ML, Celery и инфраструктуры.
@@ -91,7 +103,15 @@ class Config:
     ALLOWED_ORIGINS: str | None = os.environ.get("ALLOWED_ORIGINS")
 
     # Настройки базы данных
-    DATABASE_URL: str = os.environ.get("DATABASE_URL") or "sqlite:///ai_profiler.db"
+    _db_url_from_env: str | None = os.environ.get("DATABASE_URL")
+    _db_url_from_components: str = _build_db_url(
+        os.environ.get("DB_USER"),
+        os.environ.get("DB_PASSWORD"),
+        os.environ.get("DB_HOST", "localhost"),
+        os.environ.get("DB_PORT", "5432"),
+        os.environ.get("DB_NAME", "nexus_db"),
+    )
+    DATABASE_URL: str = _db_url_from_env or _db_url_from_components
     SQLALCHEMY_DATABASE_URI: str = DATABASE_URL
     SQLALCHEMY_TRACK_MODIFICATIONS: bool = False
 
