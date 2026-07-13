@@ -203,18 +203,6 @@ class DynamicTagEnricher:
     def resolve_tag_to_slug(
         self, db: Session, raw_tag: str, fallback_to_enrichment: bool = True,
     ) -> Optional[str]:
-        """Разрешает сырой тег пользователя в слаг иерархии интересов.
-
-        Проверяет кэш, затем выполняет SBERT-поиск и опционально LLM-уточнение.
-
-        Args:
-            db: Сессия SQLAlchemy.
-            raw_tag: Исходный тег пользователя.
-            fallback_to_enrichment: Использовать LLM при неуверенном результате.
-
-        Returns:
-            Слаг иерархии или None, если разрешить не удалось.
-        """
         if not raw_tag or not isinstance(raw_tag, str):
             return None
 
@@ -228,60 +216,79 @@ class DynamicTagEnricher:
                 return None
             return cached.slug
 
-        adapter = self._get_adapter()
+        sbert = None
         try:
             sbert = _get_sbert_model()
         except Exception as e:
-            logger.exception(f"[resolve] SBERT unavailable: {e}")
-            return None
+            logger.warning(f"[resolve] SBERT unavailable: {e}")
 
-        enriched = adapter.enrich_text(norm_tag).enriched
-        try:
-            vec = sbert.encode([enriched], convert_to_numpy=True)[0].tolist()
-        except Exception as e:
-            logger.exception(f"[resolve] SBERT encode failed: {e}")
-            return None
+        if sbert:
+            adapter = self._get_adapter()
+            enriched = adapter.enrich_text(norm_tag).enriched
+            try:
+                vec = sbert.encode([enriched], convert_to_numpy=True)[0].tolist()
+            except Exception as e:
+                logger.warning(f"[resolve] SBERT encode failed: {e}")
+                vec = None
 
-        candidates = self._retrieve_top_k_candidates(db, vec)
-        if not candidates:
-            logger.warning(f"[resolve] No candidates found for '{norm_tag}'")
-            self._cache_unresolved(db, norm_tag)
-            return None
+            if vec:
+                candidates = self._retrieve_top_k_candidates(db, vec)
+                if candidates:
+                    logger.info(
+                        "[resolve] Stage 1 complete: %d candidates for '%s' (top: %s)",
+                        len(candidates), norm_tag, candidates[0]["slug"],
+                    )
 
-        logger.info(
-            "[resolve] Stage 1 complete: %d candidates for '%s' (top: %s)",
-            len(candidates), norm_tag, candidates[0]["slug"],
-        )
+                    if fallback_to_enrichment:
+                        result = asyncio.run(self._llm_resolve_tag(norm_tag, candidates))
+                        if result is not None:
+                            if result["status"] == "matched":
+                                slug = result["slug"]
+                                confidence = result.get("confidence", 0.0)
+                                source = f"llm_{result.get('provider', 'unknown')}"
+                                self._cache_resolution(db, norm_tag, slug, confidence, source=source)
+                                return slug
+                            if result["status"] == "create":
+                                new_slug = result["suggested_slug"]
+                                confidence = result.get("confidence", 0.0)
+                                source = f"llm_{result.get('provider', 'unknown')}_new"
+                                self._cache_resolution(db, norm_tag, new_slug, confidence, source=source)
+                                logger.info(f"[resolve] LLM suggested NEW slug '{new_slug}' for '{norm_tag}'")
+                                return new_slug
 
-        if fallback_to_enrichment:
-            result = asyncio.run(self._llm_resolve_tag(norm_tag, candidates))
-            if result is not None:
-                if result["status"] == "matched":
-                    slug = result["slug"]
-                    confidence = result.get("confidence", 0.0)
-                    source = f"llm_{result.get('provider', 'unknown')}"
-                    self._cache_resolution(db, norm_tag, slug, confidence, source=source)
-                    return slug
+                        logger.warning(f"[resolve] LLM failed for '%s', falling back to vector", norm_tag)
 
-                if result["status"] == "create":
-                    new_slug = result["suggested_slug"]
-                    confidence = result.get("confidence", 0.0)
-                    source = f"llm_{result.get('provider', 'unknown')}_new"
-                    self._cache_resolution(db, norm_tag, new_slug, confidence, source=source)
-                    logger.info(f"[resolve] LLM suggested NEW slug '{new_slug}' for '{norm_tag}'")
-                    return new_slug
+                    best = candidates[0]
+                    similarity = best["similarity"]
+                    if similarity >= 0.5:
+                        source = "vector_direct" if not fallback_to_enrichment else "vector_fallback"
+                        self._cache_resolution(db, norm_tag, best["slug"], similarity, source=source)
+                        logger.info(f"[resolve] Vector match '{best['slug']}' (sim={similarity:.3f}) for '{norm_tag}'")
+                        return best["slug"]
 
-            logger.warning(f"[resolve] Stage 2 (LLM) failed for '%s', falling back to vector", norm_tag)
-
-        best = candidates[0]
-        slug = best["slug"]
-        similarity = best["similarity"]
-        if similarity >= 0.7:
-            source = "vector_direct" if not fallback_to_enrichment else "vector_fallback"
-            self._cache_resolution(db, norm_tag, slug, similarity, source=source)
-            return slug
+        keyword = self._keyword_match(db, norm_tag)
+        if keyword:
+            logger.info(f"[resolve] Keyword match '{keyword}' for '{norm_tag}'")
+            self._cache_resolution(db, norm_tag, keyword, 0.5, source="keyword")
+            return keyword
 
         self._cache_unresolved(db, norm_tag)
+        return None
+
+    def _keyword_match(self, db: Session, norm_tag: str) -> Optional[str]:
+        from sqlalchemy import or_
+        from data.interest_hierarchy import InterestHierarchyNode
+        try:
+            fuzzy = db.query(InterestHierarchyNode).filter(
+                or_(
+                    InterestHierarchyNode.slug.ilike(f"%{norm_tag}%"),
+                    InterestHierarchyNode.name.ilike(f"%{norm_tag}%"),
+                )
+            ).first()
+            if fuzzy:
+                return fuzzy.slug
+        except Exception:
+            pass
         return None
 
     async def _llm_resolve_tag(
