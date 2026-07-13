@@ -1,4 +1,4 @@
-.PHONY: dev dev-build prod prod-build clean
+.PHONY: dev dev-build dev-logs prod prod-build prod-down clean test
 
 dev:
 	docker compose up -d
@@ -17,6 +17,9 @@ prod-build:
 
 prod-down:
 	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+
+test:
+	pytest -c tests/pytest.ini tests/ -v
 
 clean:
 	docker compose down -v

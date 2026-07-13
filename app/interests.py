@@ -107,7 +107,7 @@ def edit_interest(id: int):
     Raises:
         404: Если интерес не найден или не принадлежит пользователю.
     """
-    from forms.interest import InterestForm
+    from app.forms.interest import InterestForm
     form = InterestForm()
     if request.method == "GET":
         with get_db_session() as db_sess:

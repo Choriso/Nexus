@@ -94,11 +94,14 @@
 | Ollama | Fallback для LLM-запросов | Optional |
 
 ### DevOps
-| Инструмент | Назначение |
-|-----------|-----------|
-| Docker / docker-compose | PostgreSQL + pgvector |
-| pip / venv | Управление зависимостями |
-| pytest | Тестирование |
+| Инструмент | Назначение | Версия |
+|-----------|-----------|--------|
+| Docker Engine | Контейнеризация | >= 24.0 |
+| Docker Compose | Оркестрация | >= 2.24 |
+| Nginx | Reverse proxy + SSL | 1.27-alpine |
+| Gunicorn + Eventlet | WSGI + async workers | 23.0 / 0.38 |
+| pip / venv | Управление зависимостями | — |
+| pytest | Тестирование | — |
 
 ---
 
@@ -267,9 +270,10 @@ profile.embedding.cosine_distance(my.embedding)
 
 ### Требования
 
-- Python 3.12+
-- PostgreSQL 16 (или Docker)
-- Redis 7+
+- Docker Engine >= 24.0 + Docker Compose >= 2.24
+- Python 3.12+ (для локальной разработки без Docker)
+- PostgreSQL 16 + pgvector (автоматически через Docker)
+- Redis 7+ (автоматически через Docker)
 - (Опционально) Ollama с установленной моделью
 
 ### 1. Клонирование
@@ -317,13 +321,29 @@ YANDEX_GPT_API_KEY=your-api-key   # для match-отчётов
 
 Полный список переменных — в `config.py`.
 
-### 6. Миграции
+### 6. Запуск (Docker — рекомендовано)
 
 ```bash
+# Development
+make dev
+# или
+docker compose up -d
+
+# Production
+make prod
+# или
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+### 7. Миграции
+
+```bash
+# Автоматически при старте контейнера (entrypoint.sh)
+# Вручную:
 flask db upgrade
 ```
 
-### 7. Запуск
+### 8. Локальный запуск (без Docker)
 
 ```bash
 # Dev-сервер
@@ -401,23 +421,30 @@ python tools/seed_db.py
 
 ```
 Nexus/
-├── App.py                     # Точка входа
-├── config.py                  # Конфигурация
+├── App.py                     # Точка входа (dev)
+├── wsgi.py                    # WSGI точка входа (prod — gunicorn)
+├── config.py                  # Конфигурация (все env читаются здесь)
+├── Dockerfile                 # Multi-stage Docker build
+├── docker-compose.yml         # Полный стек (app + db + redis + celery + nginx)
+├── entrypoint.sh              # Точка входа контейнера
+│
 ├── app/                       # Flask-приложение
 │   ├── __init__.py            # create_app()
 │   ├── profile.py             # Профиль, matching, граф
 │   ├── chat.py                # Чаты
-│   ├── ai/
-│   │   ├── personality_analyzer.py  # Celery-задачи
-│   │   └── match_report.py          # AI-ревью
-│   └── ai_profiler/           # AI-ядро
-├── data/                      # ORM-модели
-├── templates/                 # Jinja2-шаблоны
-├── static/                    # CSS, JS
-├── tools/                     # Утилиты
-│   ├── seed_db.py             # Сидинг БД
-│   └── test_node_match.py     # Тестер matching
-└── test_metrics.py            # 55 тестов метрик
+│   ├── ai/                    # Celery-задачи, LLM, match-отчёты
+│   └── ai_profiler/           # AI-ядро (OCEAN, MBTI, граф интересов)
+│
+├── data/                      # SQLAlchemy ORM-модели
+├── db/                        # SQL-скрипты БД (init.sql с pgvector)
+├── tests/                     # Pytest-тесты (55+ тестов метрик)
+├── tools/                     # Утилиты (seed_db, clean_seed, diagnose)
+├── templates/                 # Jinja2-шаблоны (14 файлов)
+├── static/                    # CSS, JS, картинки
+├── nginx/                     # Nginx reverse proxy config
+├── docs/                      # Документация
+├── migrations/                # Alembic миграции
+└── ml/                        # Обучение моделей
 ```
 
 ### CSS-переменные

@@ -20,9 +20,7 @@ Thumbs.db
 static/uploads/*
 NEXUS_CONTEXT.md
 README.md
-pytest.ini
-test_*.py
-clean_seed.py
-diagnose_matching.py
+tests/
+scripts/
 *.blend
 *.blend1

@@ -40,5 +40,15 @@ Thumbs.db
 # Uploads
 static/uploads/*
 
+# Stray databases
+db/*.db
+
 # Docker
 .docker/
+
+# 3D models (Blender)
+*.blend
+*.blend1
+
+# Test cache
+.pytest_cache/

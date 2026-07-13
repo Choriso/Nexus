@@ -1,0 +1,2 @@
+docker-engine >= 24.0
+docker-compose >= 2.24

@@ -22,7 +22,10 @@ RUN addgroup --system --gid 1001 nexus && \
 COPY --from=builder /root/.local /home/nexus/.local
 ENV PATH=/home/nexus/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HOME=/home/nexus/.cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/home/nexus/.cache/huggingface \
+    TRANSFORMERS_CACHE=/home/nexus/.cache/huggingface
 
 WORKDIR /app
 

@@ -26,6 +26,7 @@ python-dotenv
 # Production Server
 gunicorn
 eventlet
+aiohttp
 
 # Utilities
 requests

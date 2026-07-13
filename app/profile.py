@@ -285,12 +285,14 @@ def knowledge_graph():
 @profile_bp.route("/knowledge_graph/node", methods=["POST"])
 @login_required
 def create_node():
-    """Создаёт новый узел графа знаний для текущего пользователя.
+    """Создаёт новый узел графа знаний для текущего пользователя
+    и автоматически регистрирует теги в иерархии интересов для matching.
 
     Returns:
         flask.Response: JSON с данными созданного узла.
     """
     from data.knowledge_graph import KnowledgeNode
+    from app.ai_profiler.interest_graph import ensure_hierarchy_seeded, register_user_tags, resolve_tags_batch
 
     data = request.json
     with get_db_session() as db_sess:
@@ -303,6 +305,15 @@ def create_node():
             y=data.get("y", 0)
         )
         db_sess.add(node)
+        db_sess.flush()
+
+        raw_tags = [data.get("title", "").lower()]
+        resolved = resolve_tags_batch(db_sess, raw_tags)
+        valid_slugs = [s for s in resolved.values() if s]
+        if valid_slugs:
+            ensure_hierarchy_seeded(db_sess)
+            register_user_tags(db_sess, current_user.id, valid_slugs)
+
         db_sess.commit()
 
         return jsonify({"success": True, "node": {
@@ -709,7 +720,7 @@ def match_by_node(node_id: int):
 
         if not target_node:
             logger.warning(f"[match_by_node] Node {node_id} not found in hierarchy")
-            return jsonify({"error": "Node not found"}), 404
+            return jsonify({"candidates": []})
         
         logger.debug(f"[match_by_node] Target node: {target_node.slug} (id={node_id}, depth={target_node.depth})")
         

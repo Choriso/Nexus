@@ -39,6 +39,10 @@ def create_app() -> Flask:
 
     db_session.global_init(app.config["SQLALCHEMY_DATABASE_URI"])
 
+    from app.ai_profiler.interest_graph import ensure_hierarchy_seeded
+    with db_session.create_session() as sess:
+        ensure_hierarchy_seeded(sess)
+
     login_manager.login_view = ""
     login_manager.init_app(app)
 
