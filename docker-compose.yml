@@ -7,7 +7,7 @@ services:
       - "5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nexus}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_dev_pass}
       POSTGRES_DB: ${POSTGRES_DB:-nexus_db}
     volumes:
       - nexus_data:/var/lib/postgresql/data
@@ -42,7 +42,7 @@ services:
       FLASK_PORT: 8000
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
       DB_USER: ${POSTGRES_USER:-nexus}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-nexus_dev_pass}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-nexus_db}
@@ -74,7 +74,7 @@ services:
       FLASK_ENV: ${FLASK_ENV:-development}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
       DB_USER: ${POSTGRES_USER:-nexus}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-nexus_dev_pass}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-nexus_db}

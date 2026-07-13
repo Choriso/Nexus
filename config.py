@@ -72,13 +72,10 @@ def _join_path(base: str, filename: str) -> str:
 
 
 def _build_db_url(user: str | None, password: str | None, host: str, port: str, db: str) -> str:
-    """
-    Собирает URL для подключения к PostgreSQL из отдельных компонентов.
-    Пароль автоматически URL-кодируется, чтобы избежать проблем со спецсимволами (@ и т.д.).
-    """
     import urllib.parse
     if not user or not password:
-        return f"sqlite:///ai_profiler.db"
+        db_path = os.path.join(BASE_DIR, "instance", "ai_profiler.db")
+        return f"sqlite:///{db_path}"
     encoded_password = urllib.parse.quote(password, safe="")
     return f"postgresql://{user}:{encoded_password}@{host}:{port}/{db}"
 

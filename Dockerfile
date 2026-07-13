@@ -35,7 +35,7 @@ WORKDIR /app
 COPY --chown=nexus:nexus . .
 
 RUN mkdir -p /app/instance /app/static/uploads /home/nexus/.cache/huggingface && \
-    chown -R nexus:nexus /app/instance /app/static/uploads /home/nexus/.cache
+    chown -R nexus:nexus /app /app/instance /app/static/uploads /home/nexus/.cache
 
 EXPOSE 8000
 
