@@ -202,6 +202,7 @@ class DynamicTagEnricher:
 
     def resolve_tag_to_slug(
         self, db: Session, raw_tag: str, fallback_to_enrichment: bool = True,
+        force: bool = False,
     ) -> Optional[str]:
         if not raw_tag or not isinstance(raw_tag, str):
             return None
@@ -213,8 +214,12 @@ class DynamicTagEnricher:
         cached = db.query(DynamicAlias).filter_by(raw_tag=norm_tag).first()
         if cached:
             if getattr(cached, "slug", None) == UNRESOLVED_SENTINEL:
-                return None
-            return cached.slug
+                if not force:
+                    return None
+                db.delete(cached)
+                db.commit()
+            else:
+                return cached.slug
 
         sbert = None
         try:

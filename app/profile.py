@@ -308,7 +308,7 @@ def create_node():
         db_sess.flush()
 
         raw_tags = [data.get("title", "").lower()]
-        resolved = resolve_tags_batch(db_sess, raw_tags)
+        resolved = resolve_tags_batch(db_sess, raw_tags, force=True)
         valid_slugs = [s for s in resolved.values() if s]
         if valid_slugs:
             ensure_hierarchy_seeded(db_sess)
@@ -362,6 +362,13 @@ def update_node(node_id):
             data = request.json
             if "title" in data:
                 node.title = data["title"]
+                from app.ai_profiler.interest_graph import ensure_hierarchy_seeded, register_user_tags, resolve_tags_batch
+                raw_tags = [data.get("title", "").lower()]
+                resolved = resolve_tags_batch(db_sess, raw_tags, force=True)
+                valid_slugs = [s for s in resolved.values() if s]
+                if valid_slugs:
+                    ensure_hierarchy_seeded(db_sess)
+                    register_user_tags(db_sess, current_user.id, valid_slugs)
             if "description" in data:
                 node.description = data["description"]
             if "category" in data:

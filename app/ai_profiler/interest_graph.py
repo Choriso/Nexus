@@ -403,12 +403,15 @@ def compute_jaccard_interest_similarity(
     return len(intersection) / len(union) if union else 0.0
 
 
-def resolve_tags_batch(db: Session, raw_tags: list[str]) -> dict[str, Optional[str]]:
+def resolve_tags_batch(
+    db: Session, raw_tags: list[str], force: bool = False,
+) -> dict[str, Optional[str]]:
     """Пакетно разрешает сырые теги в слаги с кэшированием через DynamicTagEnricher.
 
     Args:
         db: Сессия SQLAlchemy.
         raw_tags: Список исходных тегов.
+        force: Переразрешить даже если тег ранее помечен как неразрешимый.
 
     Returns:
         Словарь {raw_tag: slug_or_None}.
@@ -419,7 +422,7 @@ def resolve_tags_batch(db: Session, raw_tags: list[str]) -> dict[str, Optional[s
     result: dict[str, Optional[str]] = {}
     for tag in raw_tags:
         try:
-            slug = enricher.resolve_tag_to_slug(db, tag, fallback_to_enrichment=True)
+            slug = enricher.resolve_tag_to_slug(db, tag, fallback_to_enrichment=True, force=force)
             result[tag] = slug
         except Exception as e:
             logger.warning(f"[resolve_tags_batch] Failed to resolve '{tag}': {e}")
