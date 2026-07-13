@@ -90,6 +90,7 @@ class DynamicTagEnricher:
         self.confidence_threshold = config.LLM_CLASSIFIER_CONFIDENCE_THRESHOLD
         self._cascade = _get_cascade()
         self._local_adapter = None
+        self._alias_to_slug_cache = None
 
     def _get_adapter(self):
         """Возвращает контекстуальный адаптер (lazy singleton)."""
@@ -270,7 +271,7 @@ class DynamicTagEnricher:
 
                     best = candidates[0]
                     similarity = best["similarity"]
-                    if similarity >= 0.5:
+                    if similarity >= 0.4:
                         source = "vector_direct" if not fallback_to_enrichment else "vector_fallback"
                         self._cache_resolution(db, norm_tag, best["slug"], similarity, source=source)
                         logger.info(f"[resolve] Vector match '{best['slug']}' (sim={similarity:.3f}) for '{norm_tag}'")
@@ -289,6 +290,36 @@ class DynamicTagEnricher:
     def _keyword_match(self, db: Session, norm_tag: str) -> Optional[str]:
         from sqlalchemy import or_
         from data.interest_hierarchy import InterestHierarchyNode
+        from app.ai_profiler.semantic_ontology import SEMANTIC_ONTOLOGY
+
+        if self._alias_to_slug_cache is None:
+            self._alias_to_slug_cache = {}
+            for slug, entry in SEMANTIC_ONTOLOGY.items():
+                for alias in entry.get("aliases", []):
+                    self._alias_to_slug_cache[alias.lower().strip()] = slug
+
+        def _resolve(s: str) -> Optional[str]:
+            n = db.query(InterestHierarchyNode).filter_by(slug=s).first()
+            return s if n else None
+
+        slug = self._alias_to_slug_cache.get(norm_tag)
+        if slug:
+            result = _resolve(slug)
+            if result:
+                logger.info("[keyword_match] Exact alias '%s' -> '%s'", norm_tag, slug)
+                return result
+
+        best: Optional[str] = None
+        best_len = 0
+        for alias, mapped_slug in self._alias_to_slug_cache.items():
+            if alias in norm_tag and len(alias) > best_len:
+                if _resolve(mapped_slug):
+                    best = mapped_slug
+                    best_len = len(alias)
+        if best:
+            logger.info("[keyword_match] Partial alias '%s' contains alias -> '%s'", norm_tag, best)
+            return best
+
         try:
             fuzzy = db.query(InterestHierarchyNode).filter(
                 or_(

@@ -143,13 +143,18 @@ def _node_source_text(slug: str, display_name: str) -> str:
         Строка текста для векторного кодирования.
     """
     onto_entry = SEMANTIC_ONTOLOGY.get(slug)
+    parts = [display_name]
     if onto_entry and isinstance(onto_entry, dict):
-        desc = onto_entry.get("enriched_text", "")
-        if not desc:
-            aliases = onto_entry.get("aliases", [])
-            desc = f"{display_name}. " + ", ".join(aliases[:10])
-        return desc
-    return display_name
+        enriched = onto_entry.get("enriched_text", "")
+        if enriched:
+            parts.append(enriched)
+        aliases = onto_entry.get("aliases", [])
+        if aliases:
+            parts.append(", ".join(aliases[:15]))
+        parent = onto_entry.get("parent")
+        if parent:
+            parts.append(parent)
+    return ". ".join(parts)
 
 
 def _ensure_node_embeddings(db: Session) -> None:

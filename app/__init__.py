@@ -73,6 +73,13 @@ def create_app() -> Flask:
         db_sess = db_session.create_session()
         return db_sess.get(User, user_id)
 
+    @app.cli.command("refresh-embeddings")
+    def refresh_embeddings():
+        from app.ai_profiler.interest_graph import refresh_all_node_embeddings
+        with db_session.create_session() as sess:
+            count = refresh_all_node_embeddings(sess)
+            print(f"Refreshed {count} node embeddings")
+
     from .routes import main_bp
     app.register_blueprint(main_bp)
     from .auth import auth_bp
