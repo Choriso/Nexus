@@ -227,6 +227,12 @@ class DynamicTagEnricher:
                 logger.info("[resolve_tag_to_slug] '%s' cached as '%s'", norm_tag, cached.slug)
                 return cached.slug
 
+        keyword = self._keyword_match(db, norm_tag)
+        if keyword:
+            logger.info(f"[resolve] Keyword match '{keyword}' for '{norm_tag}'")
+            self._cache_resolution(db, norm_tag, keyword, 0.5, source="keyword")
+            return keyword
+
         sbert = None
         try:
             sbert = _get_sbert_model()
@@ -246,8 +252,8 @@ class DynamicTagEnricher:
                 candidates = self._retrieve_top_k_candidates(db, vec)
                 if candidates:
                     logger.info(
-                        "[resolve] Stage 1 complete: %d candidates for '%s' (top: %s)",
-                        len(candidates), norm_tag, candidates[0]["slug"],
+                        "[resolve] Vector candidates for '%s': top=%s (sim=%.3f), count=%d",
+                        norm_tag, candidates[0]["slug"], candidates[0]["similarity"], len(candidates),
                     )
 
                     if fallback_to_enrichment:
@@ -271,17 +277,11 @@ class DynamicTagEnricher:
 
                     best = candidates[0]
                     similarity = best["similarity"]
-                    if similarity >= 0.4:
+                    if similarity >= 0.5:
                         source = "vector_direct" if not fallback_to_enrichment else "vector_fallback"
                         self._cache_resolution(db, norm_tag, best["slug"], similarity, source=source)
                         logger.info(f"[resolve] Vector match '{best['slug']}' (sim={similarity:.3f}) for '{norm_tag}'")
                         return best["slug"]
-
-        keyword = self._keyword_match(db, norm_tag)
-        if keyword:
-            logger.info(f"[resolve] Keyword match '{keyword}' for '{norm_tag}'")
-            self._cache_resolution(db, norm_tag, keyword, 0.5, source="keyword")
-            return keyword
 
         logger.info("[resolve_tag_to_slug] All methods failed for '%s', caching as UNRESOLVED", norm_tag)
         self._cache_unresolved(db, norm_tag)
