@@ -6,8 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY docs/requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+COPY requirements.txt .
+RUN python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 FROM python:3.12-slim
 
@@ -19,8 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN addgroup --system --gid 1001 nexus && \
     adduser --system --uid 1001 --ingroup nexus nexus
 
-COPY --from=builder /root/.local /home/nexus/.local
-ENV PATH=/home/nexus/.local/bin:$PATH \
+COPY --from=builder /opt/venv /opt/venv
+
+ENV PATH=/opt/venv/bin:$PATH \
+    VIRTUAL_ENV=/opt/venv \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HF_HOME=/home/nexus/.cache/huggingface \
@@ -31,15 +34,14 @@ WORKDIR /app
 
 COPY --chown=nexus:nexus . .
 
-RUN mkdir -p /app/instance /app/static/uploads && chown -R nexus:nexus /app/instance /app/static/uploads
-
-RUN mkdir -p /home/nexus/.cache && chown -R nexus:nexus /home/nexus/.cache
+RUN mkdir -p /app/instance /app/static/uploads /home/nexus/.cache/huggingface && \
+    chown -R nexus:nexus /app/instance /app/static/uploads /home/nexus/.cache
 
 EXPOSE 8000
 
-USER nexus
-
-COPY --chown=nexus:nexus entrypoint.sh /entrypoint.sh
+COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+USER nexus
 
 ENTRYPOINT ["/entrypoint.sh"]
