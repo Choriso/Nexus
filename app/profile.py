@@ -310,9 +310,14 @@ def create_node():
         raw_tags = [data.get("title", "").lower()]
         resolved = resolve_tags_batch(db_sess, raw_tags, force=True)
         valid_slugs = [s for s in resolved.values() if s]
+        logger.info("[create_node] title='%s' resolved=%s valid_slugs=%s",
+                     raw_tags[0], resolved, valid_slugs)
         if valid_slugs:
             ensure_hierarchy_seeded(db_sess)
             register_user_tags(db_sess, current_user.id, valid_slugs)
+        else:
+            logger.warning("[create_node] No valid slugs for '%s' — weights NOT registered",
+                           raw_tags[0])
 
         db_sess.commit()
 
@@ -366,9 +371,14 @@ def update_node(node_id):
                 raw_tags = [data.get("title", "").lower()]
                 resolved = resolve_tags_batch(db_sess, raw_tags, force=True)
                 valid_slugs = [s for s in resolved.values() if s]
+                logger.info("[update_node] title='%s' resolved=%s valid_slugs=%s",
+                             raw_tags[0], resolved, valid_slugs)
                 if valid_slugs:
                     ensure_hierarchy_seeded(db_sess)
                     register_user_tags(db_sess, current_user.id, valid_slugs)
+                else:
+                    logger.warning("[update_node] No valid slugs for '%s'",
+                                   raw_tags[0])
             if "description" in data:
                 node.description = data["description"]
             if "category" in data:
@@ -771,7 +781,8 @@ def match_by_node(node_id: int):
         ).all()
         
         if not candidates_query:
-            logger.debug("[match_by_node] No candidates with graph weights found")
+            logger.warning("[match_by_node] No candidates with graph weights found for target_and_related_ids=%s",
+                           target_and_related_ids)
             return jsonify([])
         
         candidates_by_user = {}

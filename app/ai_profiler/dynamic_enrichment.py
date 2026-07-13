@@ -211,14 +211,19 @@ class DynamicTagEnricher:
         if not norm_tag:
             return None
 
+        logger.info("[resolve_tag_to_slug] Entry: norm_tag='%s' force=%s", norm_tag, force)
+
         cached = db.query(DynamicAlias).filter_by(raw_tag=norm_tag).first()
         if cached:
             if getattr(cached, "slug", None) == UNRESOLVED_SENTINEL:
                 if not force:
+                    logger.info("[resolve_tag_to_slug] '%s' cached as UNRESOLVED, returning None", norm_tag)
                     return None
+                logger.info("[resolve_tag_to_slug] '%s' cached as UNRESOLVED, force=True, deleting cache", norm_tag)
                 db.delete(cached)
                 db.commit()
             else:
+                logger.info("[resolve_tag_to_slug] '%s' cached as '%s'", norm_tag, cached.slug)
                 return cached.slug
 
         sbert = None
@@ -277,6 +282,7 @@ class DynamicTagEnricher:
             self._cache_resolution(db, norm_tag, keyword, 0.5, source="keyword")
             return keyword
 
+        logger.info("[resolve_tag_to_slug] All methods failed for '%s', caching as UNRESOLVED", norm_tag)
         self._cache_unresolved(db, norm_tag)
         return None
 

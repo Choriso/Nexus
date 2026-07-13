@@ -314,7 +314,8 @@ def register_user_tags(db: Session, user_id: int, resolved_slugs: list[str]) -> 
                 ))
 
     db.commit()
-    logger.debug(f"[register_user_tags] Registered {len(resolved_slugs)} slugs for user {user_id}")
+    weight_count = db.query(UserInterestGraphWeight).filter_by(user_id=user_id).count()
+    logger.info(f"[register_user_tags] Registered {len(resolved_slugs)} slugs for user {user_id}, total weight entries: {weight_count}")
 
 
 def get_user_graph_weights(db: Session, user_id: int) -> dict[int, float]:
