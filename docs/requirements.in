@@ -23,6 +23,10 @@ celery
 redis
 python-dotenv
 
+# Production Server
+gunicorn
+eventlet
+
 # Utilities
 requests
 blinker

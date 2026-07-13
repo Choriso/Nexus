@@ -10,7 +10,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+if os.environ.get("FLASK_ENV") != "production":
+    load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -79,10 +80,10 @@ class Config:
 
     # Настройки Flask
     SECRET_KEY: str = os.environ.get("SECRET_KEY") or "dev-secret-key-change-in-production"
-    FLASK_APP: str = os.environ.get("FLASK_APP", "App.py")
+    FLASK_APP: str = os.environ.get("FLASK_APP", "wsgi.py")
     FLASK_ENV: str = os.environ.get("FLASK_ENV", "development")
-    FLASK_HOST: str = os.environ.get("FLASK_HOST", "127.0.0.1")
-    FLASK_PORT: int = _env_int("FLASK_PORT", 3000)
+    FLASK_HOST: str = os.environ.get("FLASK_HOST", "0.0.0.0")
+    FLASK_PORT: int = _env_int("FLASK_PORT", 8000)
     DEBUG: bool = FLASK_ENV == "development"
 
     UPLOAD_FOLDER: str = os.environ.get("UPLOAD_FOLDER", "static/uploads/")
@@ -211,7 +212,7 @@ class Config:
 
     # Rate Limiting
     RATELIMIT_STORAGE_URL: str = REDIS_URL
-    RATELIMIT_DEFAULT: str = "100/hour"
+    RATELIMIT_DEFAULT: str = "1000/hour" if FLASK_ENV == "development" else "100/hour"
     RATELIMIT_STRATEGY: str = "fixed-window"
     RATELIMIT_ENABLED: bool = _env_bool("RATELIMIT_ENABLED", "True")
     AI_ANALYSIS_RATE_LIMIT: str = os.environ.get("AI_ANALYSIS_RATE_LIMIT", "5/hour")

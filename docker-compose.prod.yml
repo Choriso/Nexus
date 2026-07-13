@@ -1,0 +1,20 @@
+services:
+  app:
+    environment:
+      FLASK_ENV: production
+      GUNICORN_LOG_LEVEL: warning
+
+  celery_worker:
+    environment:
+      FLASK_ENV: production
+
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?Error: POSTGRES_PASSWORD is required in production}
+
+  nginx:
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./static:/app/static:ro
+      - nexus_uploads:/app/static/uploads:ro

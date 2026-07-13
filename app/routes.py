@@ -1,7 +1,11 @@
-from flask import Blueprint, render_template, make_response, request, session
+from flask import Blueprint, render_template, make_response, request, session, jsonify
 from flask_login import current_user
 
 main_bp = Blueprint('main', __name__)
+
+@main_bp.route("/health")
+def health():
+    return jsonify({"status": "healthy"}), 200
 
 @main_bp.route("/")
 def start():
