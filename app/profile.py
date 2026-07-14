@@ -707,33 +707,39 @@ def match_by_node(node_id: int):
     )
 
     with get_db_session() as db_sess:
-        target_node = db_sess.query(InterestHierarchyNode).filter_by(id=node_id).first()
+        # Сначала проверяем KnowledgeNode (нода графа знаний пользователя)
+        # — это позволяет корректно матчить по разрешённому слагу,
+        # а не по случайному InterestHierarchyNode с тем же ID.
+        knowledge_node = db_sess.query(KnowledgeNode).filter_by(id=node_id).first()
         kn_category = None
+        target_node = None
 
+        if knowledge_node:
+            kn_category = (knowledge_node.category or "").lower()
+            title = knowledge_node.title.lower()
+            try:
+                enricher = get_tag_enricher()
+                slug = enricher.resolve_tag_to_slug(db_sess, title, fallback_to_enrichment=False)
+                if slug:
+                    target_node = db_sess.query(InterestHierarchyNode).filter_by(slug=slug).first()
+            except Exception:
+                logger.warning(f"[match_by_node] SBERT resolve failed, trying keyword match for '{title}'")
+
+            if not target_node:
+                from sqlalchemy import or_
+                fuzzy = db_sess.query(InterestHierarchyNode).filter(
+                    or_(
+                        InterestHierarchyNode.slug.ilike(f"%{title}%"),
+                        InterestHierarchyNode.name.ilike(f"%{title}%"),
+                    )
+                ).first()
+                if fuzzy:
+                    target_node = fuzzy
+                    logger.info(f"[match_by_node] Keyword fallback matched node '{title}' -> {target_node.slug}")
+
+        # Если не KnowledgeNode — пробуем как прямой InterestHierarchyNode
         if not target_node:
-            knowledge_node = db_sess.query(KnowledgeNode).filter_by(id=node_id).first()
-            if knowledge_node:
-                kn_category = (knowledge_node.category or "").lower()
-                title = knowledge_node.title.lower()
-                try:
-                    enricher = get_tag_enricher()
-                    slug = enricher.resolve_tag_to_slug(db_sess, title, fallback_to_enrichment=False)
-                    if slug:
-                        target_node = db_sess.query(InterestHierarchyNode).filter_by(slug=slug).first()
-                except Exception:
-                    logger.warning(f"[match_by_node] SBERT resolve failed, trying keyword match for '{title}'")
-
-                if not target_node:
-                    from sqlalchemy import or_
-                    fuzzy = db_sess.query(InterestHierarchyNode).filter(
-                        or_(
-                            InterestHierarchyNode.slug.ilike(f"%{title}%"),
-                            InterestHierarchyNode.name.ilike(f"%{title}%"),
-                        )
-                    ).first()
-                    if fuzzy:
-                        target_node = fuzzy
-                        logger.info(f"[match_by_node] Keyword fallback matched node '{title}' -> {target_node.slug}")
+            target_node = db_sess.query(InterestHierarchyNode).filter_by(id=node_id).first()
 
         if not target_node:
             logger.warning(f"[match_by_node] Node {node_id} not found in hierarchy")
