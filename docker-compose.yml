@@ -41,7 +41,7 @@ services:
       FLASK_HOST: 0.0.0.0
       FLASK_PORT: 8000
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
-      DATABASE_URL: postgresql://my_app_user:Danil%402008@db:5432/nexus_db
+      DATABASE_URL: postgresql://nexus:Danil%402008@db:5432/nexus_db
       DB_USER: ${POSTGRES_USER:-nexus}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-nexus_dev_pass}
       DB_HOST: db
@@ -74,7 +74,7 @@ services:
     environment:
       FLASK_ENV: ${FLASK_ENV:-development}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
-      DATABASE_URL: postgresql://my_app_user:Danil%402008@db:5432/nexus_db
+      DATABASE_URL: postgresql://nexus:Danil%402008@db:5432/nexus_db
       DB_USER: ${POSTGRES_USER:-nexus}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-nexus_dev_pass}
       DB_HOST: db
