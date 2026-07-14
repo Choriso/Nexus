@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-if [ "$FLASK_ENV" = "production" ]; then
-    echo "Running database migrations..."
-    flask db upgrade 2>/dev/null || echo "Migrations skipped (no Flask-Migrate heads)"
+echo "Running database migrations..."
+flask db upgrade 2>/dev/null || echo "Migrations skipped (no Flask-Migrate heads)"
 
+if [ "$FLASK_ENV" = "production" ]; then
     echo "Starting gunicorn with eventlet workers..."
     exec gunicorn -k eventlet -w 1 \
         --bind 0.0.0.0:8000 \

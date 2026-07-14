@@ -331,13 +331,10 @@ erDiagram
 ```mermaid
 flowchart LR
     subgraph Data["Подготовка данных"]
-        CSV["Kaggle CSV\n(personality_dataset_10000)"]
         GEN["Сгенерированный JSON\n(generated_data_ocean.json)"]
-        PREP["prepare_dataset.py\nОбъединение + перемешивание"]
-        PREP_OUT["train_data.json\n(11579 записей)"]
-        CSV & GEN --> PREP --> PREP_OUT
-        PREP_OUT --> PRE["preprocess.py\nSBERT эмбеддинг (384d)\n+ 4 ручных признака"]
-        PRE --> PRE_OUT["train_data_precomputed.pt\n(388d тензоры)"]
+        PREP["preprocess.py\nSBERT эмбеддинг (384d)\n+ 4 ручных признака"]
+        PREP_OUT["train_data_precomputed.pt\n(388d тензоры)"]
+        GEN --> PREP --> PREP_OUT
     end
 
     subgraph Arch["Архитектура сети"]
@@ -364,9 +361,8 @@ flowchart LR
 **Оптимизатор**: AdamW (lr=3e-4, weight_decay=1e-5), ReduceLROnPlateau (factor=0.5, patience=12), EarlyStopping (patience=40 по R²).
 
 **Данные:**
-- Kaggle `personality_dataset_10000.csv` — 10 000 резюме с OCEAN-оценками (weight=1.0)
-- Рукописный `generated_data_ocean.json` — качественные примеры (weight=10.0)
-- Итого: 11 579 записей, сплит 85/15 train/val
+- Сгенерированный `generated_data_ocean.json` — синтетические примеры текстов с OCEAN-оценками
+- Итого: ~17 000 записей, сплит 85/15 train/val
 
 **Процесс обучения:**
 ```bash
@@ -398,7 +394,7 @@ flowchart LR
 
 **Оптимизатор**: AdamW (lr=5e-4, weight_decay=0.01), EarlyStopping (patience=12 по val_acc).
 
-**Данные**: `mbti_1.csv` — Kaggle-датасет постов с размеченным MBTI. Сплит 80/20 стратифицированный.
+**Данные**: Сгенерированный набор текстов с размеченным MBTI. Сплит 80/20 стратифицированный.
 
 **Запуск:**
 ```bash
@@ -453,7 +449,7 @@ python finetune_sbert.py \
 | **MAE (лучший)** | 0.0621 |
 | **Функция потерь** | Ordinal Binary Cross-Entropy |
 | **Архитектура** | ResidualBlock 256 → Bottleneck 128 → 5×10 Ordinal |
-| **Данные** | 11 579 примеров (85/15 split) |
+| **Данные** | ~17 000 примеров (85/15 split) |
 | **Эпох до best** | ~60 |
 
 ### MBTI Classifier
@@ -463,7 +459,7 @@ python finetune_sbert.py \
 | **Val Accuracy** | ~72% на отложенной выборке |
 | **Балансировка** | WeightedRandomSampler по частотам классов |
 | **Архитектура** | MLP 384→256→128→16 |
-| **Данные** | Kaggle MBTI-датасет |
+| **Данные** | Сгенерированный датасет |
 
 ### График обучения
 

@@ -201,9 +201,8 @@ loss = BCE(cum_probs, cum_targets)
 
 | Источник | Записей | Вес |
 |----------|---------|-----|
-| Kaggle personality_dataset_10000.csv | 10 000 | 1.0 |
-| generated_data_ocean.json (рукописный) | 1 579 | 10.0 |
-| **Итого** | **11 579** | — |
+| generated_data_ocean.json (сгенерированный) | ~17 000 | 1.0 |
+| **Итого** | **~17 000** | — |
 | Train/Val split | 85/15 | random_seed=42 |
 
 **Ручные признаки (4 шт.):**
@@ -283,7 +282,7 @@ mbti_type = blend_neural_rule_based(
 
 #### Данные
 
-`mbti_1.csv` — Kaggle-датасет ~9000 постов с метками MBTI.
+Сгенерированный набор текстов с метками MBTI.
 - Сплит 80/20 стратифицированный
 - WeightedRandomSampler для балансировки классов
 - Наиболее редкие типы: INFJ, ENFJ, INTJ
@@ -507,9 +506,9 @@ flowchart TB
 
 | Модель | Метрика | Значение | Датасет | Размер |
 |--------|---------|----------|---------|--------|
-| OCEAN | R² | 0.6724 | 11 579 | 10.2 MB .pth |
-| OCEAN | MAE | 0.0621 | 11 579 | — |
-| MBTI | Accuracy | ~72% | ~9 000 | 0.8 MB .pth |
+| OCEAN | R² | 0.6724 | ~17 000 | 10.2 MB .pth |
+| OCEAN | MAE | 0.0621 | ~17 000 | — |
+| MBTI | Accuracy | ~72% | Сгенерированный | 0.8 MB .pth |
 | MBTI | Baseline | 6.25% | — | — |
 | Interest Head | Accuracy | ~85% (val) | anchors | 0.3 MB .pth |
 | SBERT | embedding dim | 384 | — | 470 MB |
@@ -531,12 +530,9 @@ ml/
 ├── precompute_embedding.py     # Прекомпьютинг эмбеддингов в .pt
 ├── test_model.py               # Тест инференса AIProfiler
 │
-├── data/
-│   ├── train_data.json         # Сырой датасет (11579 записей)
-│   ├── train_data_precomputed.pt  # Прекомпьюченные тензоры (388d)
-│   ├── generated_data_ocean.json  # Рукописные OCEAN-примеры
-│   ├── personality_dataset_10000.csv  # Kaggle резюме
-│   └── mbti_1.csv              # Kaggle MBTI
+    ├── data/
+    │   ├── generated_data_ocean.json  # Сгенерированные OCEAN-примеры
+    │   └── train_data_precomputed.pt  # Прекомпьюченные тензоры (388d)
 │
 └── artifacts/
     ├── personality_model_best.pth   # OCEAN веса (best R²)
