@@ -46,7 +46,7 @@
     }
     /* Кнопки в стиле современного UI */
     .btn-ui {
-        background: #7f5af0;
+        background: var(--color-primary);
         color: white;
         border: none;
         padding: 8px 16px;
@@ -70,6 +70,64 @@
         pointer-events: none; /* Текст не перехватывает клики, они проходят сквозь него на узел */
         user-select: none;
     }
+
+    /* ── Custom Select ── */
+    .kg-select {
+        position: relative;
+        width: 100%;
+        margin-bottom: 12px;
+    }
+    .kg-select-trigger {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px;
+        background: #232533;
+        border: 1px solid rgba(255,255,255,0.2);
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        text-align: left;
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+    .kg-select-arrow {
+        font-size: 12px;
+        transition: transform 0.2s ease;
+        color: #94a1b2;
+    }
+    .kg-select.open .kg-select-arrow {
+        transform: rotate(180deg);
+    }
+    .kg-select-options {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 10000;
+        margin-top: 4px;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.2);
+        background: #232533;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .kg-select.open .kg-select-options {
+        display: block;
+    }
+    .kg-select-option {
+        padding: 10px 14px;
+        cursor: pointer;
+        color: #94a1b2;
+        transition: background 0.12s ease, color 0.12s ease;
+    }
+    .kg-select-option:hover,
+    .kg-select-option.selected {
+        background: var(--color-primary);
+        color: white;
+    }
 </style>
 
 <div style="max-width: 1400px; margin: 20px auto; padding: 0 20px;">
@@ -92,28 +150,34 @@
                 <textarea id="nodeDescription" placeholder="Описание" rows="4"
                           style="width: 100%; padding: 10px; margin-bottom: 12px; background: #232533; border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px; resize: vertical;"></textarea>
 
-                <select id="nodeCategory"
-                        style="width: 100%; padding: 10px; margin-bottom: 12px; background: #232533; border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px;">
-                    <option value="">Без категории</option>
-                    <option value="work">Работа</option>
-                    <option value="hobby">Хобби</option>
-                    <option value="want">Что хочу</option>
-                    <option value="skills">Навыки</option>
-                    <option value="goals">Цели</option>
-                </select>
+                <div class="kg-select" id="nodeCategoryWrapper">
+                    <button class="kg-select-trigger" type="button" id="nodeCategoryTrigger">
+                        <span id="nodeCategoryText">Без категории</span>
+                        <span class="kg-select-arrow">▾</span>
+                    </button>
+                    <div class="kg-select-options" id="nodeCategoryOptions">
+                        <div class="kg-select-option" data-value="">Без категории</div>
+                        <div class="kg-select-option" data-value="work">Работа</div>
+                        <div class="kg-select-option" data-value="hobby">Хобби</div>
+                        <div class="kg-select-option" data-value="want">Что хочу</div>
+                        <div class="kg-select-option" data-value="skills">Навыки</div>
+                        <div class="kg-select-option" data-value="goals">Цели</div>
+                    </div>
+                </div>
+                <input type="hidden" id="nodeCategory" value="">
 
                 <div style="display: flex; gap: 12px;">
-                    <button onclick="saveNode()"
-                            style="flex: 1; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Сохранить
+                    <button onclick="closeModal()"
+                            style="flex: 1; padding: 12px; background: #666; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Отмена
                     </button>
                     <button onclick="deleteNode()"
                             style="padding: 12px; background: #ff6b6b; color: white; border: none; border-radius: 4px; cursor: pointer;">
                         Удалить
                     </button>
-                    <button onclick="closeModal()"
-                            style="padding: 12px; background: #666; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        Отмена
+                    <button onclick="saveNode()"
+                            style="flex: 1; padding: 12px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Сохранить
                     </button>
                 </div>
 
@@ -127,6 +191,36 @@ window.addEventListener('load', () => {
     const nodesData = {{ nodes|tojson|safe }};
     const connectionsData = {{ connections|tojson|safe }};
     const currentUserName = "{{ current_user.name }}";
+
+    // Custom Select init
+    (function initKgSelect() {
+        var wrapper = document.getElementById('nodeCategoryWrapper');
+        var trigger = document.getElementById('nodeCategoryTrigger');
+        var options = document.getElementById('nodeCategoryOptions');
+        var hidden = document.getElementById('nodeCategory');
+        var text = document.getElementById('nodeCategoryText');
+        if (!wrapper) return;
+        trigger.addEventListener('click', function(e) {
+            e.stopPropagation();
+            wrapper.classList.toggle('open');
+        });
+        options.querySelectorAll('.kg-select-option').forEach(function(opt) {
+            opt.addEventListener('click', function() {
+                var val = this.getAttribute('data-value');
+                var label = this.textContent;
+                hidden.value = val;
+                text.textContent = label;
+                options.querySelectorAll('.kg-select-option').forEach(function(o) {
+                    o.classList.remove('selected');
+                });
+                this.classList.add('selected');
+                wrapper.classList.remove('open');
+            });
+        });
+        document.addEventListener('click', function() {
+            wrapper.classList.remove('open');
+        });
+    })();
 
     console.log("[KnowledgeGraph] nodesData:", nodesData);
     console.log("[KnowledgeGraph] connectionsData:", connectionsData);

@@ -26,11 +26,12 @@
   --color-border-card: #333842;
 
   /* ─── Accents ─── */
-  --color-primary: #4a90e2;
+  --color-primary: #7f5af0;
+  --color-primary-glow: rgba(127, 90, 240, 0.5);
+  --color-primary-bg: rgba(127, 90, 240, 0.12);
   --color-accent: #FD7B41;
-  --color-accent-purple: #7f5af0;
-  --color-accent-purple-glow: rgba(127, 90, 240, 0.5);
-  --color-accent-purple-bg: rgba(127, 90, 240, 0.12);
+  --color-accent-glow: rgba(253, 123, 65, 0.4);
+  --color-accent-bg: rgba(253, 123, 65, 0.12);
 
   /* ─── Semantic ─── */
   --color-success: #2cb67d;
@@ -50,7 +51,7 @@
 
   /* ─── Modal ─── */
   --color-modal-bg: #242629;
-  --color-modal-border: #7f5af0;
+  --color-modal-border: var(--color-primary);
 
   /* Radii */
   --radius-0: 6px;

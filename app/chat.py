@@ -117,6 +117,8 @@ def get_user_chats(user_id: int) -> list[dict]:
             chats.append({
                 "chat_id": chat.id,
                 "chat_name": chat_name,
+                "other_user_id": other_user_id,
+                "chat_avatar": other_user.image_path if other_user and other_user.image_path else None,
                 "last_message": last_message.content if last_message else None,
                 "timestamp": last_message.timestamp if last_message else None,
                 "message_type": last_message.message_type if last_message else None,
@@ -572,3 +574,53 @@ def chat_settings():
                 settings.font_size = int(data["font_size"])
             db_sess.commit()
             return jsonify({"success": True, "message": "Настройки сохранены"})
+
+
+@chat_bp.route("/chat/<int:chat_id>/delete", methods=["DELETE"])
+@login_required
+def delete_chat(chat_id: int):
+    """Удаляет чат и все его сообщения."""
+    from data.message import Message
+    with get_db_session() as db_sess:
+        chat = db_sess.query(Chat).filter(Chat.id == chat_id).first()
+        if not chat:
+            return jsonify({"success": False, "message": "Чат не найден"}), 404
+        if chat.user1_id != current_user.id and chat.user2_id != current_user.id:
+            return jsonify({"success": False, "message": "Нет доступа"}), 403
+        db_sess.query(Message).filter(Message.chat_id == chat.id).delete()
+        db_sess.delete(chat)
+        db_sess.commit()
+        return jsonify({"success": True})
+
+
+@chat_bp.route("/chat/<int:user_id>/block", methods=["POST"])
+@login_required
+def block_user(user_id: int):
+    """Блокирует пользователя."""
+    if user_id == current_user.id:
+        return jsonify({"success": False, "message": "Нельзя заблокировать себя"}), 400
+    from data.blocked_user import BlockedUser
+    with get_db_session() as db_sess:
+        existing = db_sess.query(BlockedUser).filter_by(
+            user_id=current_user.id, blocked_user_id=user_id
+        ).first()
+        if existing:
+            return jsonify({"success": False, "message": "Пользователь уже заблокирован"})
+        db_sess.add(BlockedUser(user_id=current_user.id, blocked_user_id=user_id))
+        db_sess.commit()
+        return jsonify({"success": True})
+
+
+@chat_bp.route("/chat/<int:user_id>/unblock", methods=["POST"])
+@login_required
+def unblock_user(user_id: int):
+    """Разблокирует пользователя."""
+    from data.blocked_user import BlockedUser
+    with get_db_session() as db_sess:
+        entry = db_sess.query(BlockedUser).filter_by(
+            user_id=current_user.id, blocked_user_id=user_id
+        ).first()
+        if entry:
+            db_sess.delete(entry)
+            db_sess.commit()
+        return jsonify({"success": True})

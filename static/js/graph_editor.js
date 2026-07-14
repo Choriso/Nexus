@@ -198,7 +198,7 @@ window.initGraph = function(rawNodes, rawConnections, userName) {
  */
 window.addNode = async function() {
     const title = prompt('Название нового узла:');
-    if (!title) return;
+    if (!title || !title.trim()) return;
 
     try {
         const res = await fetch('/knowledge_graph/node', {
@@ -264,12 +264,28 @@ async function _saveNodePosition(nodeId, x, y) {
  * @param {Object} nodeData - Данные узла для редактирования.
  * @returns {void}
  */
+function _setKgSelectValue(val) {
+    var text = document.getElementById('nodeCategoryText');
+    var hidden = document.getElementById('nodeCategory');
+    var options = document.getElementById('nodeCategoryOptions');
+    if (!text || !hidden || !options) return;
+    hidden.value = val || '';
+    options.querySelectorAll('.kg-select-option').forEach(function(o) {
+        if (o.getAttribute('data-value') === (val || '')) {
+            text.textContent = o.textContent;
+            o.classList.add('selected');
+        } else {
+            o.classList.remove('selected');
+        }
+    });
+}
+
 window.openEditModal = function(nodeData) {
     editingNodeId = String(nodeData.id);
 
     document.getElementById('nodeTitle').value       = nodeData.title       || '';
     document.getElementById('nodeDescription').value = nodeData.description || '';
-    document.getElementById('nodeCategory').value    = nodeData.category    || '';
+    _setKgSelectValue(nodeData.category || '');
 
     const modal = document.getElementById('nodeModal');
     modal.style.display = 'flex';
@@ -293,8 +309,14 @@ window.closeModal = function() {
 window.saveNode = async function() {
     if (!editingNodeId) return;
 
+    var title = document.getElementById('nodeTitle').value.trim();
+    if (!title) {
+        alert('Название не может быть пустым');
+        return;
+    }
+
     const payload = {
-        title:       document.getElementById('nodeTitle').value,
+        title:       title,
         description: document.getElementById('nodeDescription').value,
         category:    document.getElementById('nodeCategory').value,
     };

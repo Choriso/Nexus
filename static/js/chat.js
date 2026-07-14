@@ -166,6 +166,7 @@ async function sendMessage() {
         const data = await res.json();
         if (data.status === "ok") {
             messageInput.value = "";
+            if (chatId) localStorage.removeItem('chat_draft_' + chatId);
             cancelReply();
             loadChatMessages(chatId);
         }
@@ -223,12 +224,93 @@ async function uploadFile() {
  * Returns:
  *   None
  */
+let currentOtherUserId = null;
+
 function updateSelectedChat(newChatId, element) {
     chatId = newChatId;
+    currentOtherUserId = element ? element.getAttribute('data-other-user-id') : null;
     document.querySelectorAll(".chat-item-styled").forEach(item => item.classList.remove("active"));
     if (element) element.classList.add("active");
     const name = element ? element.querySelector('.chat-name').textContent : "Чат";
     const header = document.getElementById('chatHeaderTitle');
     if (header) header.textContent = name;
+    // Restore draft
+    var draftKey = 'chat_draft_' + chatId;
+    var saved = localStorage.getItem(draftKey);
+    if (messageInput) {
+        messageInput.value = saved || '';
+    }
     loadChatMessages(chatId);
 }
+
+// Save draft on input
+document.addEventListener('DOMContentLoaded', function() {
+    var input = document.getElementById('messageInput');
+    if (input) {
+        input.addEventListener('input', function() {
+            if (chatId) {
+                localStorage.setItem('chat_draft_' + chatId, this.value);
+            }
+        });
+    }
+});
+
+// Chat menu
+function toggleChatMenu() {
+    var menu = document.getElementById('chatMenuDropdown');
+    if (menu) menu.classList.toggle('open');
+}
+
+function goToProfile() {
+    if (currentOtherUserId) {
+        window.location.href = '/viewProfile?user_id=' + currentOtherUserId;
+    }
+}
+
+function deleteCurrentChat() {
+    if (!chatId) return;
+    if (!confirm('Удалить этот чат? Все сообщения будут удалены.')) return;
+    showLoading('Удаление чата...');
+    fetch('/chat/' + chatId + '/delete', { method: 'DELETE' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            hideLoading();
+            if (data.success) {
+                // Remove from sidebar
+                var el = document.querySelector('[data-chat-id="' + chatId + '"]');
+                if (el) el.remove();
+                document.getElementById('chatHeaderTitle').textContent = 'Выберите диалог';
+                document.getElementById('chat').innerHTML = '';
+                chatId = null;
+                currentOtherUserId = null;
+            } else {
+                alert(data.message || 'Ошибка удаления');
+            }
+        })
+        .catch(function(err) { hideLoading(); console.error(err); });
+}
+
+function blockCurrentUser() {
+    if (!currentOtherUserId) return;
+    if (!confirm('Заблокировать пользователя?')) return;
+    showLoading('Блокировка...');
+    fetch('/chat/' + currentOtherUserId + '/block', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            hideLoading();
+            if (data.success) {
+                alert('Пользователь заблокирован');
+            } else {
+                alert(data.message || 'Ошибка');
+            }
+        })
+        .catch(function(err) { hideLoading(); console.error(err); });
+}
+
+// Close menu on outside click
+document.addEventListener('click', function(e) {
+    var menu = document.getElementById('chatMenuDropdown');
+    if (menu && !e.target.closest('.chat-menu-wrapper')) {
+        menu.classList.remove('open');
+    }
+});

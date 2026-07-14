@@ -14,3 +14,7 @@ def start():
 @main_bp.route('/geolocation')
 def geolocation():
     return render_template('geolocation_ip.html')
+
+@main_bp.route('/terms')
+def terms():
+    return render_template('terms.html', hide_header=True)

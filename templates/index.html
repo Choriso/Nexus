@@ -61,7 +61,7 @@
     }
     #resultsList::-webkit-scrollbar       { width: 5px; }
     #resultsList::-webkit-scrollbar-track { background: transparent; }
-    #resultsList::-webkit-scrollbar-thumb { background: var(--color-accent-purple); border-radius: 10px; }
+    #resultsList::-webkit-scrollbar-thumb { background: var(--color-primary); border-radius: 10px; }
 
     .placeholder-text {
         color: var(--color-text-muted);
@@ -79,7 +79,7 @@
         width: 380px;
         max-width: calc(100vw - 48px);
         background: var(--color-card);
-        border: 1px solid var(--color-accent-purple-glow);
+        border: 1px solid var(--color-primary-glow);
         border-radius: 12px;
         box-shadow: var(--shadow-toast), 0 0 24px rgba(127, 90, 240, 0.12);
         transform: translateY(calc(100% + 24px));
@@ -109,8 +109,8 @@
     .ai-toast__glow-dot {
         width: 8px; height: 8px;
         border-radius: 50%;
-        background: var(--color-accent-purple);
-        box-shadow: 0 0 8px var(--color-accent-purple);
+        background: var(--color-primary);
+        box-shadow: 0 0 8px var(--color-primary);
         animation: pulseGlow 2s ease-in-out infinite;
     }
     .ai-toast__close {
@@ -132,7 +132,7 @@
     .ai-toast__body .tw-cursor {
         display: inline-block;
         width: 2px; height: 1em;
-        background: var(--color-accent-purple);
+        background: var(--color-primary);
         margin-left: 2px;
         vertical-align: text-bottom;
         animation: blinkCursor 0.9s step-end infinite;
@@ -148,7 +148,7 @@
         transition: border-color 0.2s, box-shadow 0.2s;
     }
     .match-card:hover {
-        border-color: var(--color-accent-purple);
+        border-color: var(--color-primary);
         box-shadow: 0 0 0 1px rgba(127, 90, 240, 0.15);
     }
 
@@ -163,7 +163,7 @@
         font-size: 0.9rem;
         font-weight: 700;
         color: var(--color-text-heading);
-        background: var(--color-accent-purple);
+        background: var(--color-primary);
         padding: 4px 8px;
         border-radius: 5px;
         min-width: 36px;
@@ -198,7 +198,7 @@
         line-height: 1.3;
     }
     .btn-ai {
-        background: var(--color-accent-purple-bg);
+        background: var(--color-primary-bg);
         border: 1px solid rgba(127, 90, 240, 0.35);
         color: var(--color-ai-text);
     }
@@ -318,7 +318,76 @@
         margin: 0 0 20px;
     }
     .modal-body { display: flex; flex-direction: column; gap: 12px; }
-    .modal-actions { display: flex; gap: 10px; margin-top: 15px; }
+    .modal-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        flex-wrap: wrap;
+    }
+    .modal-actions .btn-primary {
+        flex: 1 1 0;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding: 10px 16px;
+    }
+    .modal-actions .modal-action-main {
+        flex: 2 1 0;
+    }
+    /* ── Custom Select ── */
+    .custom-select {
+        position: relative;
+        width: 100%;
+    }
+    .custom-select-trigger {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        text-align: left;
+        line-height: 1.4;
+    }
+    .custom-select-arrow {
+        font-size: 12px;
+        transition: transform 0.2s ease;
+        color: var(--color-text-muted);
+        margin-left: 8px;
+    }
+    .custom-select.open .custom-select-arrow {
+        transform: rotate(180deg);
+    }
+    .custom-select-options {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 10000;
+        margin-top: 4px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--color-border-subtle);
+        background: var(--color-modal-bg);
+        overflow: hidden;
+        box-shadow: var(--shadow-graph);
+    }
+    .custom-select.open .custom-select-options {
+        display: block;
+    }
+    .custom-select-option {
+        padding: 12px 16px;
+        cursor: pointer;
+        color: var(--color-text);
+        transition: background 0.12s ease;
+    }
+    .custom-select-option:hover {
+        background: var(--color-primary);
+        color: var(--color-panel);
+    }
+    .custom-select-option.selected {
+        background: var(--color-primary);
+        color: var(--color-panel);
+    }
 </style>
 
 <div class="app-main-grid graph-layout-active">
@@ -372,23 +441,24 @@
                       style="width:100%; box-sizing:border-box; resize:none; overflow:hidden; min-height:80px;"
                       oninput="this.style.height=''; this.style.height=this.scrollHeight+'px'"></textarea>
 
-            <select id="nodeCategory" class="ui-input" style="width:100%; box-sizing:border-box;">
-                <option value="hobby">Хобби</option>
-                <option value="work">Работа</option>
-                <option value="psychology">Психология</option>
-            </select>
+            <div class="custom-select" id="nodeCategoryWrapper">
+                <button class="ui-input custom-select-trigger" type="button" id="nodeCategoryTrigger">
+                    <span id="nodeCategoryText">Хобби</span>
+                    <span class="custom-select-arrow">▾</span>
+                </button>
+                <div class="custom-select-options" id="nodeCategoryOptions">
+                    <div class="custom-select-option" data-value="hobby">Хобби</div>
+                    <div class="custom-select-option" data-value="work">Работа</div>
+                    <div class="custom-select-option" data-value="psychology">Психология</div>
+                </div>
+            </div>
+            <input type="hidden" id="nodeCategory" value="hobby">
 
             <div class="modal-actions">
-                <button onclick="window.saveNode()" class="btn-primary" style="flex:2; white-space:nowrap;">Сохранить
-                </button>
+                <button onclick="window.closeModal()" class="btn-primary btn-cancel">Отмена</button>
                 <button id="deleteBtn" onclick="window.deleteNode()" class="btn-primary btn-danger"
-                        style="flex:1; white-space:nowrap; display:none;">
-                    Удалить
-                </button>
-                <button onclick="window.closeModal()" class="btn-primary btn-cancel"
-                        style="flex:1; white-space:nowrap;">
-                    Отмена
-                </button>
+                        style="display:none;">Удалить</button>
+                <button onclick="window.saveNode()" class="btn-primary modal-action-main">Сохранить</button>
             </div>
         </div>
     </div>
@@ -397,6 +467,57 @@
 <script>
     window._editingNodeId = null;
 
+    // --- Custom Select: категории ---
+    function initCustomSelect() {
+        var wrapper = document.getElementById('nodeCategoryWrapper');
+        var trigger = document.getElementById('nodeCategoryTrigger');
+        var options = document.getElementById('nodeCategoryOptions');
+        var hidden = document.getElementById('nodeCategory');
+        var text = document.getElementById('nodeCategoryText');
+
+        if (!wrapper) return;
+
+        trigger.addEventListener('click', function(e) {
+            e.stopPropagation();
+            wrapper.classList.toggle('open');
+        });
+
+        options.querySelectorAll('.custom-select-option').forEach(function(opt) {
+            opt.addEventListener('click', function() {
+                var val = this.getAttribute('data-value');
+                var label = this.textContent;
+                hidden.value = val;
+                text.textContent = label;
+                options.querySelectorAll('.custom-select-option').forEach(function(o) {
+                    o.classList.remove('selected');
+                });
+                this.classList.add('selected');
+                wrapper.classList.remove('open');
+            });
+        });
+
+        document.addEventListener('click', function() {
+            wrapper.classList.remove('open');
+        });
+    }
+    document.addEventListener('DOMContentLoaded', initCustomSelect);
+
+    function setCustomSelectValue(val) {
+        var wrapper = document.getElementById('nodeCategoryWrapper');
+        var hidden = document.getElementById('nodeCategory');
+        var text = document.getElementById('nodeCategoryText');
+        var options = document.getElementById('nodeCategoryOptions');
+        hidden.value = val;
+        options.querySelectorAll('.custom-select-option').forEach(function(o) {
+            if (o.getAttribute('data-value') === val) {
+                text.textContent = o.textContent;
+                o.classList.add('selected');
+            } else {
+                o.classList.remove('selected');
+            }
+        });
+    }
+
     // --- ФУНКЦИИ УПРАВЛЕНИЯ УЗЛАМИ ---
     window.addNode = function() {
         window._editingNodeId = null;
@@ -404,6 +525,7 @@
         document.getElementById('nodeDescription').value = '';
         document.getElementById('modalTitle').textContent = 'Новый интерес';
         document.getElementById('deleteBtn').style.display = 'none';
+        setCustomSelectValue('hobby');
         document.getElementById('nodeModal').style.display = 'flex';
     };
 
@@ -411,16 +533,21 @@
         window._editingNodeId = String(d.id);
         document.getElementById('nodeTitle').value = d.title || '';
         document.getElementById('nodeDescription').value = d.description || '';
-        document.getElementById('nodeCategory').value = d.category || 'hobby';
+        setCustomSelectValue(d.category || 'hobby');
         document.getElementById('modalTitle').textContent = 'Редактировать';
         document.getElementById('deleteBtn').style.display = 'block';
         document.getElementById('nodeModal').style.display = 'flex';
     };
 
     window.saveNode = async function() {
+        var title = document.getElementById('nodeTitle').value.trim();
+        if (!title) {
+            alert('Название не может быть пустым');
+            return;
+        }
         const id = window._editingNodeId;
         const payload = {
-            title: document.getElementById('nodeTitle').value,
+            title: title,
             description: document.getElementById('nodeDescription').value,
             category: document.getElementById('nodeCategory').value,
             x: 0, y: 0

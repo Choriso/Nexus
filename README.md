@@ -11,6 +11,8 @@
 - [Основные возможности](#основные-возможности)
 - [AI-конвейер](#ai-конвейер)
 - [Схема базы данных](#схема-базы-данных)
+- [Обучение нейросетей](#обучение-нейросетей)
+- [Результаты модели](#результаты-модели)
 - [Установка и запуск](#установка-и-запуск)
 - [Конфигурация](#конфигурация)
 - [API-эндпоинты](#api-эндпоинты)
@@ -21,42 +23,55 @@
 
 ## Архитектура
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Клиент (Browser)                             │
-│  HTML/Jinja2  │  D3.js (граф знаний)  │  Chart.js (OCEAN radar)    │
-│  Socket.IO (real-time чат)                                          │
-├─────────────────────────────────────────────────────────────────────┤
-│                        Flask Application                            │
-│  Blueprints: auth, profile, chat, interests, moderation, analytics  │
-│  Flask-Login │ Flask-SocketIO │ Flask-CORS │ Flask-Migrate          │
-├─────────────────────────────────────────────────────────────────────┤
-│                        AI / ML Layer                                │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  AI Profiler (singleton)                                     │   │
-│  │  ├── PersonalityClassifier (OCEAN)                           │   │
-│  │  ├── MBTIClassifier (16 типов)                               │   │
-│  │  └── ContextualAdapter (SBERT enrichment)                   │   │
-│  ├──────────────────────────────────────────────────────────────┤   │
-│  │  LLM Providers (failover cascade)                            │   │
-│  │  ├── YandexGPT (primary)                                     │   │
-│  │  └── Ollama (fallback)                                       │   │
-│  ├──────────────────────────────────────────────────────────────┤   │
-│  │  Search & Ranking                                            │   │
-│  │  ├── Graph Score (overlap весов интересов)                   │   │
-│  │  ├── OCEAN Similarity                                        │   │
-│  │  ├── Jaccard Similarity                                      │   │
-│  │  ├── Schwartz Similarity                                     │   │
-│  │  └── Root Personality Score                                  │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────────┤
-│                        Background Tasks (Celery)                    │
-│  Redis (broker)  ←→  analyze_user_profile  →  update_compatibility  │
-├─────────────────────────────────────────────────────────────────────┤
-│                        Data Layer                                   │
-│  SQLAlchemy 2.x │ PostgreSQL 16 + pgvector │ Alembic migrations     │
-│  Redis Cache (сессии, кэш)                                          │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Client["Клиент (Browser)"]
+        A1["HTML / Jinja2"]
+        A2["D3.js (граф знаний)"]
+        A3["Chart.js (OCEAN radar)"]
+        A4["Socket.IO (real-time чат)"]
+    end
+
+    subgraph Flask["Flask Application"]
+        B["Blueprints: auth, profile, chat, interests, moderation, analytics\nFlask-Login · Flask-SocketIO · Flask-CORS · Flask-Migrate"]
+    end
+
+    subgraph AI["AI / ML Layer"]
+        C1["AI Profiler (singleton)"]
+        C1a["PersonalityClassifier (OCEAN)"]
+        C1b["MBTIClassifier (16 типов)"]
+        C1c["ContextualAdapter (SBERT enrichment)"]
+        C1 --> C1a & C1b & C1c
+
+        C2["LLM Providers (failover cascade)"]
+        C2a["YandexGPT (primary)"]
+        C2b["Ollama (fallback)"]
+        C2 --> C2a & C2b
+
+        C3["Search & Ranking"]
+        C3a["Graph Score"]
+        C3b["OCEAN Similarity"]
+        C3c["Jaccard Similarity"]
+        C3d["Schwartz Similarity"]
+        C3e["Root Personality Score"]
+        C3 --> C3a & C3b & C3c & C3d & C3e
+    end
+
+    subgraph BG["Background Tasks (Celery)"]
+        D1["Redis (broker)"]
+        D2["analyze_user_profile"]
+        D3["update_compatibility"]
+        D1 <--> D2 --> D3
+    end
+
+    subgraph Data["Data Layer"]
+        E1["SQLAlchemy 2.x"]
+        E2["PostgreSQL 16 + pgvector"]
+        E3["Alembic migrations"]
+        E4["Redis Cache"]
+    end
+
+    Client --> Flask --> AI & BG --> Data
 ```
 
 ---
@@ -166,65 +181,50 @@
 
 ### Фаза 1: Анализ сообщений (WRITE)
 
-```
-Сообщение → POST /messages → analyze_user_profile.delay(user_id)
-                                      │
-                                      ▼
-                         AIProfiler.analyze_profile(text)
-                                      │
-                          ┌───────────┴───────────┐
-                          ▼                       ▼
-                  PersonalityProfile      ExtractedInterests
-                  OCEAN + MBTI + embed    hobbies, skills, goals
-                          │
-                          ▼
-                  update_compatibility.delay(user_id)
-                          │
-                          ▼
-                  pgvector cosine_distance
-                  → UserCompatibility
+```mermaid
+sequenceDiagram
+    participant U as Пользователь
+    participant S as Сервер
+    participant AI as AIProfiler
+    participant DB as База данных
+
+    U->>S: POST /messages
+    S->>AI: analyze_user_profile.delay(user_id)
+    AI->>AI: analyze_profile(text)
+    par PersonalityProfile
+        AI-->>DB: OCEAN + MBTI + embed
+    and ExtractedInterests
+        AI-->>DB: hobbies, skills, goals
+    end
+    AI->>AI: update_compatibility.delay(user_id)
+    AI->>DB: pgvector cosine_distance
+    DB-->>S: UserCompatibility
 ```
 
 ### Фаза 2: Поиск (READ)
 
-```
-Клик узла → GET /api/graph/match/<node_id>
-                         │
-        ┌────────────────┼────────────────┐
-        ▼                ▼                ▼
-  Graph Score       OCEAN Sim        Jaccard Sim
-        │                │                │
-        └────────────────┼────────────────┘
-                         ▼
-               Root Personality Score
-                         │
-                         ▼
-               Комбинация с весами
-               + micro_gradient_step
-                         │
-                         ▼
-               Отсортированный список кандидатов
+```mermaid
+flowchart LR
+    A["Клик узла"] --> B["GET /api/graph/match/&lt;node_id&gt;"]
+    B --> C["Graph Score"]
+    B --> D["OCEAN Similarity"]
+    B --> E["Jaccard Similarity"]
+    C & D & E --> F["Root Personality Score"]
+    F --> G["Комбинация с весами<br/>+ micro_gradient_step"]
+    G --> H["Отсортированный список кандидатов"]
 ```
 
 ### Фаза 3: Match-отчёт
 
-```
-Нажатие «Анализ ИИ» → GET /api/graph/report/<user_id>?node_id=N
-                               │
-                    _build_prompt_payload()
-                    ┌─────────────────────────┐
-                    │ OCEAN + MBTI + Schwartz │
-                    │ Поведение + цели        │
-                    │ Общие теги              │
-                    └─────────────────────────┘
-                               │
-                    ┌──────────┴──────────┐
-                    ▼                     ▼
-              YandexGPT              Ollama/Fallback
-                    │                     │
-                    └──────────┬──────────┘
-                               ▼
-                    AI Toast (bottom-left)
+```mermaid
+flowchart TB
+    A["Нажатие «Анализ ИИ»"] --> B["GET /api/graph/report/&lt;user_id&gt;?node_id=N"]
+    B --> C["_build_prompt_payload()"]
+    C --> D["OCEAN + MBTI + Schwartz<br/>Поведение + цели<br/>Общие теги"]
+    D --> E{"LLM Cascade"}
+    E --> F["YandexGPT (primary)"]
+    E --> G["Ollama / Шаблон (fallback)"]
+    F & G --> H["AI Toast (bottom-left)"]
 ```
 
 ---
@@ -247,6 +247,7 @@
 | `user_interest_graph_weights` | Веса интересов | `weight`, `source_tag` |
 | `dynamic_aliases` | Кэш тегов | `raw_tag`, `slug`, `confidence` |
 | `global_weights_config` | Веса метрик | `weight_ocean`, `weight_graph`, `weight_jaccard` |
+| `blocked_users` | Заблокированные | `user_id`, `blocked_user_id` |
 
 ### pgvector
 
@@ -263,6 +264,212 @@ WITH (m = 16, ef_construction = 64);
 ```python
 profile.embedding.cosine_distance(my.embedding)
 ```
+
+### ER-диаграмма
+
+```mermaid
+erDiagram
+    users ||--o{ ai_user_personality_profiles : has
+    users ||--o{ ai_extracted_interests : has
+    users ||--o{ user_schwartz_profiles : has
+    users ||--o{ user_behavior_profiles : has
+    users ||--o{ ai_user_compatibility : "matched with"
+    users ||--o{ knowledge_nodes : creates
+    users ||--o{ user_interest_graph_weights : configures
+    knowledge_nodes ||--o{ knowledge_connections : connects
+
+    users {
+        int id PK
+        string name
+        string email
+        float metric_weight_ocean_offset
+        float metric_weight_graph_offset
+        float metric_weight_jaccard_offset
+        float metric_weight_schwartz_offset
+        boolean allow_location
+        string image_path
+    }
+
+    ai_user_personality_profiles {
+        int id PK
+        int user_id FK
+        float openness
+        float conscientiousness
+        float extraversion
+        float agreeableness
+        float neuroticism
+        vector embedding "Vector(5)"
+        string mbti_type
+        string communication_style
+    }
+
+    knowledge_nodes {
+        int id PK
+        int user_id FK
+        string title
+        string category
+        float x
+        float y
+    }
+
+    interest_hierarchy_nodes {
+        int id PK
+        string slug
+        string path
+        vector embedding "Vector(384)"
+    }
+```
+
+---
+
+## Обучение нейросетей
+
+Модуль `ml/` содержит полный пайплайн обучения трёх нейросетевых моделей, используемых в AI-ядре платформы.
+
+### OCEAN PersonalityClassifier
+
+```mermaid
+flowchart LR
+    subgraph Data["Подготовка данных"]
+        CSV["Kaggle CSV\n(personality_dataset_10000)"]
+        GEN["Сгенерированный JSON\n(generated_data_ocean.json)"]
+        PREP["prepare_dataset.py\nОбъединение + перемешивание"]
+        PREP_OUT["train_data.json\n(11579 записей)"]
+        CSV & GEN --> PREP --> PREP_OUT
+        PREP_OUT --> PRE["preprocess.py\nSBERT эмбеддинг (384d)\n+ 4 ручных признака"]
+        PRE --> PRE_OUT["train_data_precomputed.pt\n(388d тензоры)"]
+    end
+
+    subgraph Arch["Архитектура сети"]
+        INPUT["Input (388)"] --> PROJ["Linear 388→256\nLayerNorm + GELU + Dropout"]
+        PROJ --> RES["ResidualBlock (256)\nLinear→LN→GELU→Dropout→Linear→LN\n+ skip connection"]
+        RES --> BOT["Bottleneck 256→128\nLayerNorm + GELU + Dropout"]
+        BOT --> CLASS["Linear 128→50\n(5 traits × 10 bins)"]
+        CLASS --> OUT["Reshape: (B, 5, 10)\nOrdinal Softmax → взвешенное ожидание"]
+    end
+
+    Data --> Arch
+```
+
+**Архитектура:**
+- **Вход**: 388-мерный вектор (384 SBERT + 4 ручных признака: длина сообщения, доля CAPS, кол-во `!`, кол-во `?`)
+- **Projection**: `Linear(388, 256) → LayerNorm → GELU → Dropout(0.2)`
+- **ResidualBlock**: `Linear(256,256) → LayerNorm → GELU → Dropout(0.15) → Linear(256,256) → LayerNorm → + skip connection → GELU`
+- **Bottleneck**: `Linear(256, 128) → LayerNorm → GELU → Dropout(0.2)`
+- **Classifier head**: `Linear(128, 5 × 10)` → reshape to `(B, 5, 10)`
+- **Выход**: ординальная регрессия по 10 бинам для каждой из 5 черт, конвертация в непрерывное значение [0, 1] через взвешенное softmax-ожидание
+
+**Функция потерь**: Кастомный `ordinal_loss` — бинарная кросс-энтропия по кумулятивным вероятностям `P(Y ≤ k)` с label smoothing 0.02.
+
+**Оптимизатор**: AdamW (lr=3e-4, weight_decay=1e-5), ReduceLROnPlateau (factor=0.5, patience=12), EarlyStopping (patience=40 по R²).
+
+**Данные:**
+- Kaggle `personality_dataset_10000.csv` — 10 000 резюме с OCEAN-оценками (weight=1.0)
+- Рукописный `generated_data_ocean.json` — качественные примеры (weight=10.0)
+- Итого: 11 579 записей, сплит 85/15 train/val
+
+**Процесс обучения:**
+```bash
+cd ml
+python preprocess.py --input data/generated_data_ocean.json --output data/train_data_precomputed.json
+python precompute_embedding.py       # → train_data_precomputed.pt
+python train_ocean.py                # → artifacts/personality_model_best.pth
+```
+
+---
+
+### MBTIClassifier
+
+**Архитектура:**
+
+```mermaid
+flowchart LR
+    TEXT["Текст сообщения"] --> SBERT["paraphrase-multilingual-\nMiniLM-L12-v2"]
+    SBERT --> EMB["384d эмбеддинг"]
+    EMB --> L1["Linear 384→256\nLayerNorm + GELU + Dropout(0.3)"]
+    L1 --> L2["Linear 256→128\nLayerNorm + GELU + Dropout(0.2)"]
+    L2 --> L3["Linear 128→16"]
+    L3 --> SOFT["Softmax\n16 MBTI типов"]
+```
+
+**MLP**: 384 → 256 (LayerNorm, GELU, Dropout 0.3) → 128 (LayerNorm, GELU, Dropout 0.2) → 16 (логиты)
+
+**Функция потерь**: CrossEntropyLoss с WeightedRandomSampler (балансировка редких типов).
+
+**Оптимизатор**: AdamW (lr=5e-4, weight_decay=0.01), EarlyStopping (patience=12 по val_acc).
+
+**Данные**: `mbti_1.csv` — Kaggle-датасет постов с размеченным MBTI. Сплит 80/20 стратифицированный.
+
+**Запуск:**
+```bash
+python train_mbti.py  # → artifacts/mbti_model.pth
+```
+
+---
+
+### Interest Head (Zero-shot классификатор интересов)
+
+```mermaid
+flowchart LR
+    TEXT["Текст пользователя"] --> SBERT["SBERT\n384d"]
+    TAX["Таксономия интересов\n(глобальная категория, подкатегория)"]
+    TAX --> ANCHORS["Якорные тексты"]
+    ANCHORS --> SBERT2["SBERT\n384d"]
+    SBERT --> COS["Cosine Similarity\nс каждым якорем"]
+    SBERT2 --> COS
+    COS --> THRESH["Порог confidence\n→ matched tags"]
+```
+
+**CustomInterestClassifier**: линейная проекция 384 → 128 → `num_classes` с Softmax. Обучается на якорях из `INTEREST_TAXONOMY` (15 эпох, lr=0.001).
+
+**Запуск:**
+```bash
+python train_interest_head.py  # → artifacts/interest_head.pth
+```
+
+---
+
+### Fine-tuning SBERT
+
+Шаблон для дообучения эмбеддингов на парах (сленг → каноническое описание) через `MultipleNegativesRankingLoss`:
+
+```bash
+python finetune_sbert.py \
+    --pairs data/slang_pairs.json \
+    --output ml/artifacts/sbert-finetuned \
+    --epochs 3 \
+    --batch-size 16
+```
+
+---
+
+## Результаты модели
+
+### OCEAN PersonalityClassifier
+
+| Метрика | Значение |
+|---------|----------|
+| **R² (лучший)** | 0.6724 |
+| **MAE (лучший)** | 0.0621 |
+| **Функция потерь** | Ordinal Binary Cross-Entropy |
+| **Архитектура** | ResidualBlock 256 → Bottleneck 128 → 5×10 Ordinal |
+| **Данные** | 11 579 примеров (85/15 split) |
+| **Эпох до best** | ~60 |
+
+### MBTI Classifier
+
+| Метрика | Значение |
+|---------|----------|
+| **Val Accuracy** | ~72% на отложенной выборке |
+| **Балансировка** | WeightedRandomSampler по частотам классов |
+| **Архитектура** | MLP 384→256→128→16 |
+| **Данные** | Kaggle MBTI-датасет |
+
+### График обучения
+
+![Training History](ml/artifacts/training_history.png)
+
+*График обновляется после каждого запуска `train_ocean.py`. На графике: Loss (train/val), R² Score, Learning Rate.*
 
 ---
 
@@ -403,6 +610,9 @@ python tools/seed_db.py
 | `/create_chat/<user_id>` | POST | Создать чат |
 | `/chat` | GET | Страница чата |
 | `/messages/<chat_id>` | GET | История сообщений |
+| `/chat/<chat_id>/delete` | DELETE | Удалить чат |
+| `/chat/<user_id>/block` | POST | Заблокировать пользователя |
+| `/chat/<user_id>/unblock` | POST | Разблокировать пользователя |
 
 ### Прочее
 
@@ -412,6 +622,7 @@ python tools/seed_db.py
 | `/login` | GET/POST | Вход |
 | `/upload_avatar` | POST | Загрузка аватара |
 | `/favorite/<interest_id>` | POST | Избранное |
+| `/terms` | GET | Страница правил |
 
 ---
 
@@ -444,7 +655,18 @@ Nexus/
 ├── nginx/                     # Nginx reverse proxy config
 ├── docs/                      # Документация
 ├── migrations/                # Alembic миграции
-└── ml/                        # Обучение моделей
+├── ml/                        # Обучение моделей
+│   ├── train_ocean.py         # OCEAN PersonalityClassifier
+│   ├── train_mbti.py          # MBTI классификатор
+│   ├── train_interest_head.py # Interest Head
+│   ├── finetune_sbert.py      # Fine-tuning SBERT
+│   ├── preprocess.py          # Извлечение признаков
+│   ├── prepare_dataset.py     # Подготовка датасета
+│   ├── precompute_embedding.py
+│   ├── test_model.py          # Тест инференса
+│   ├── data/                  # Датасеты
+│   └── artifacts/             # Обученные веса + графики
+└── LICENSE
 ```
 
 ### CSS-переменные
@@ -456,7 +678,8 @@ Nexus/
 --color-bg-deep: #1b1b20;         /* Граф */
 --color-panel: #3C4044;           /* Панели */
 --color-card: #242629;            /* Карточки */
---color-accent-purple: #7f5af0;   /* Акцент графа */
+--color-primary: #7f5af0;         /* Основной акцент */
+--color-accent: #FD7B41;          /* Вторичный акцент */
 --color-success: #2cb67d;         /* Теги */
 --color-text: #DDDCDB;            /* Текст */
 --color-text-heading: #fffffe;    /* Заголовки */

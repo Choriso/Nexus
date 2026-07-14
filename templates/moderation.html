@@ -14,7 +14,7 @@
                 <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
                     <div>
                         <div style="color: white; font-weight: bold; margin-bottom: 8px;">
-                            Интерес: <a href="/viewInteres?user_id={{ report.interest.user.id }}&interest_id={{ report.interest.id }}" style="color: #4a90e2;">{{ report.interest.title }}</a>
+                            Интерес: <a href="/viewInteres?user_id={{ report.interest.user.id }}&interest_id={{ report.interest.id }}" style="color: var(--color-primary);">{{ report.interest.title }}</a>
                         </div>
                         <div style="color: #999; font-size: 14px;">
                             Автор: {{ report.interest.user.name }} | Жалоба от: {{ report.reporter.name }}
@@ -71,7 +71,7 @@
                     </span>
                 </div>
                 {% if report.moderator_comment %}
-                <div style="color: #4a90e2; font-size: 12px; margin-top: 4px;">
+                <div style="color: var(--color-primary); font-size: 12px; margin-top: 4px;">
                     Комментарий: {{ report.moderator_comment }}
                 </div>
                 {% endif %}

@@ -10,7 +10,12 @@
                      alt="Avatar" class="avatar-img avatar-img--profile" id="avatarImage"
                      onerror="this.src='{{ url_for('static', filename='images/default-avatar.svg') }}'">
                 <input type="file" id="avatarInput" accept="image/*" style="display: none;" onchange="uploadAvatar()">
-                <div class="avatar-edit-badge">📷</div>
+                <div class="avatar-edit-badge">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                </div>
             </div>
 
             <div class="profile-info-main">
@@ -28,10 +33,12 @@
             </div>
         </div>
 
+        {% if current_user.allow_location %}
         <div class="profile-section-card">
             <h3 class="section-title">Геолокация</h3>
             <div id="map" class="map-container"></div>
         </div>
+        {% endif %}
         <div class="profile-section-card ai-personality-card">
             <div class="ai-card-content">
 
@@ -41,6 +48,7 @@
                             <span class="badge badge-primary">
                         {{ current_user.personality_profile.mbti_type if current_user.personality_profile else 'В анализе...' }}
                     </span>
+                            <span class="section-hint-icon" data-hint="OCEAN (Big Five) — 5 черт личности: Открытость, Добросовестность, Экстраверсия, Дружелюбие, Нейротизм. Каждая измеряется от 0 до 1 на основе анализа текстов через нейросеть PersonalityClassifier. MBTI — 16 типов личности, определяемых нейросетевым классификатором + rule-based блендом. Энтузиазм, формальность, стиль общения и сотрудничества — поведенческие метрики, извлекаемые из средней длины сообщений, пунктуации, эмодзи и тональности.">?</span>
                         </h3>
                         <p class="text-muted small">Анализ на основе ваших сообщений в Nexus</p>
                     </div>
@@ -110,25 +118,33 @@
             'conformity': 'Конформность', 'tradition': 'Традиции',
             'benevolence': 'Доброта', 'universalism': 'Универсализм',
         } %}
+
         {% if schwartz_profile %}
-        <div class="profile-section-card">
-            <h3 class="section-title">Ценности (Шварц)</h3>
-            {% set sw = schwartz_profile %}
-            {% set sw_items = [] %}
-            {% for key, label in schwartz_map.items() %}
-                {% set _ = sw_items.append({'label': label, 'value': sw[key]}) %}
-            {% endfor %}
-            {% set sw_sorted = sw_items|sort(attribute='value', reverse=true) %}
-            <div class="schwartz-bars">
-            {% for item in sw_sorted[:5] %}
-                <div class="schwartz-bar-row">
-                    <span class="schwartz-bar-label">{{ item.label }}</span>
-                    <div class="schwartz-bar-track">
-                        <div class="schwartz-bar-fill" style="width: {{ item.value * 100 }}%"></div>
+        {% set sw = schwartz_profile %}
+        {% set sw_items = [] %}
+        {% for key, label in schwartz_map.items() %}
+            {% set _ = sw_items.append({'key': key, 'label': label, 'value': sw[key]}) %}
+        {% endfor %}
+        {% set sw_sorted = sw_items|sort(attribute='value', reverse=true) %}
+        <div class="profile-section-card schwartz-card">
+            <h3 class="section-title">Ценности (Шварц)
+                <span class="section-hint-icon" data-hint="Модель базовых ценностей Ш. Шварца — 10 универсальных ценностей, отражающих мотивационные цели личности. Определяются через AI-анализ текстов: ключевые слова, темы и контекст сообщений сопоставляются с behavioural-якорями каждой ценности. Результат — относительная важность каждой ценности для пользователя от 0 до 1.">?</span>
+            </h3>
+            <div class="schwartz-layout">
+                <div class="schwartz-bars">
+                {% for item in sw_sorted[:5] %}
+                    <div class="schwartz-bar-row">
+                        <span class="schwartz-bar-label">{{ item.label }}</span>
+                        <div class="schwartz-bar-track">
+                            <div class="schwartz-bar-fill" style="width: {{ item.value * 100 }}%"></div>
+                        </div>
+                        <span class="schwartz-bar-value">{{ (item.value * 100)|round|int }}%</span>
                     </div>
-                    <span class="schwartz-bar-value">{{ (item.value * 100)|round|int }}%</span>
+                {% endfor %}
                 </div>
-            {% endfor %}
+                <div class="schwartz-chart-side">
+                    <canvas id="schwartzChart"></canvas>
+                </div>
             </div>
         </div>
         {% endif %}
@@ -183,6 +199,7 @@
             <a href="/moderation" class="btn-primary">Модерация</a>
             <a href="/analytics" class="btn-primary">Аналитика</a>
             {% endif %}
+            <a href="/logout" class="btn-primary btn-logout">Выйти</a>
         </div>
 
     </section>
@@ -393,9 +410,73 @@
         padding-top: var(--space-4);
     }
 
+    .schwartz-card .schwartz-layout {
+        display: flex;
+        gap: var(--space-6);
+        align-items: center;
+    }
+    .schwartz-card .schwartz-bars {
+        flex: 1;
+        min-width: 0;
+    }
+    .schwartz-card .schwartz-chart-side {
+        width: 200px;
+        flex-shrink: 0;
+    }
+    .section-hint-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--color-primary);
+        color: #fff;
+        font-size: 11px;
+        font-weight: bold;
+        cursor: help;
+        margin-left: 8px;
+        vertical-align: middle;
+        position: relative;
+    }
+    .section-hint-icon:hover::after {
+        content: attr(data-hint);
+        position: absolute;
+        bottom: calc(100% + 10px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1b1b20;
+        color: #dddcdb;
+        font-size: 12px;
+        font-weight: normal;
+        white-space: normal;
+        width: 280px;
+        padding: 12px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--color-border-subtle);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        z-index: 100;
+        line-height: 1.5;
+        text-transform: none;
+        letter-spacing: normal;
+        text-align: left;
+        pointer-events: none;
+    }
+    .section-hint-icon:hover::before {
+        content: '';
+        position: absolute;
+        bottom: calc(100% + 4px);
+        left: 50%;
+        transform: translateX(-50%);
+        border: 6px solid transparent;
+        border-top-color: var(--color-border-subtle);
+        z-index: 100;
+    }
     @media (max-width: 768px) {
         .profile-header-card { flex-direction: column; text-align: center; }
         .profile-interests-grid { grid-template-columns: 1fr; }
+        .schwartz-card .schwartz-layout { flex-direction: column; }
+        .schwartz-card .schwartz-chart-side { width: 100%; max-width: 250px; }
     }
 </style>
 
@@ -496,12 +577,12 @@
                 {{ current_user.personality_profile.neuroticism|default(0.5) }}
             ],
             fill: true,
-            backgroundColor: 'rgba(54, 162, 235, 0.2)',
-            borderColor: 'rgb(54, 162, 235)',
-            pointBackgroundColor: 'rgb(54, 162, 235)',
+            backgroundColor: 'rgba(127, 90, 240, 0.2)',
+            borderColor: 'rgb(127, 90, 240)',
+            pointBackgroundColor: 'rgb(127, 90, 240)',
             pointBorderColor: '#fff',
             pointHoverBackgroundColor: '#fff',
-            pointHoverBorderColor: 'rgb(54, 162, 235)'
+            pointHoverBorderColor: 'rgb(127, 90, 240)'
         }]
     };
 
@@ -531,5 +612,52 @@
     };
 
     new Chart(ctx, config);
+
+    {% if schwartz_profile %}
+    var swCtx = document.getElementById('schwartzChart').getContext('2d');
+    var swLabels = [
+        {% for item in sw_items %}'{{ item.label }}'{% if not loop.last %},{% endif %}{% endfor %}
+    ];
+    var swData = [
+        {% for item in sw_items %}{{ item.value }}{% if not loop.last %},{% endif %}{% endfor %}
+    ];
+    new Chart(swCtx, {
+        type: 'radar',
+        data: {
+            labels: swLabels,
+            datasets: [{
+                label: 'Ценности (Шварц)',
+                data: swData,
+                fill: true,
+                backgroundColor: 'rgba(253, 123, 65, 0.15)',
+                borderColor: 'rgb(253, 123, 65)',
+                pointBackgroundColor: 'rgb(253, 123, 65)',
+                pointBorderColor: '#fff',
+                pointHoverBackgroundColor: '#fff',
+                pointHoverBorderColor: 'rgb(253, 123, 65)'
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            scales: {
+                r: {
+                    angleLines: { color: 'rgba(255, 255, 255, 0.1)' },
+                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                    suggestedMin: 0,
+                    suggestedMax: 1,
+                    ticks: { display: false, stepSize: 0.2 },
+                    pointLabels: {
+                        color: '#94a1b2',
+                        font: { size: 10 }
+                    }
+                }
+            },
+            plugins: {
+                legend: { display: false }
+            }
+        }
+    });
+    {% endif %}
 </script>
 {% endblock %}

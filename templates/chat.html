@@ -9,10 +9,17 @@
                 <h3 class="sidebar-title">Диалоги</h3>
                 <div class="chat-list-styled custom-scrollbar">
                     {% for chat in chat_data %}
-                    <div class="chat-item-styled {% if chat.chat_id == default_chat_id %}active{% endif %}"
-                         data-chat-id="{{ chat.chat_id }}"
-                         onclick="updateSelectedChat('{{ chat.chat_id }}', this)">
-                        <div class="chat-item-avatar">{{ chat.chat_name[0] | upper }}</div>
+                     <div class="chat-item-styled {% if chat.chat_id == default_chat_id %}active{% endif %}"
+                          data-chat-id="{{ chat.chat_id }}"
+                          data-other-user-id="{{ chat.other_user_id }}"
+                          onclick="updateSelectedChat('{{ chat.chat_id }}', this)">
+                        <div class="chat-item-avatar">
+                            {% if chat.chat_avatar %}
+                            <img src="{{ chat.chat_avatar }}" alt="" class="chat-item-avatar-img">
+                            {% else %}
+                            {{ chat.chat_name[0] | upper }}
+                            {% endif %}
+                        </div>
                         <div class="chat-item-info">
                             <span class="chat-name">{{ chat.chat_name }}</span>
                         </div>
@@ -33,7 +40,14 @@
                         Выберите диалог
                         {% endif %}
                     </h3>
-                    <button class="btn-icon-settings" onclick="openChatSettings()"></button>
+                    <div class="chat-menu-wrapper">
+                        <button class="btn-icon-settings" onclick="toggleChatMenu()">Меню</button>
+                        <div class="chat-menu-dropdown" id="chatMenuDropdown">
+                            <button onclick="goToProfile()">Профиль</button>
+                            <button onclick="blockCurrentUser()">Заблокировать</button>
+                            <button onclick="deleteCurrentChat()" style="color:#ff6b6b;">Удалить чат</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="chat-messages-area custom-scrollbar" id="chat">
@@ -49,14 +63,14 @@
                                   style="font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--color-text-soft);"></span>
                         </div>
                         <button onclick="cancelReply()"
-                                style="background: none; border: none; color: var(--color-text-muted); cursor: pointer; padding: 5px;">
-                            ✕
+                                style="background: none; border: none; color: var(--color-text-muted); cursor: pointer; padding: 5px; font-size: 18px; line-height: 1;">
+                            &times;
                         </button>
                     </div>
 
                     <div style="display: flex; gap: 10px; align-items: center; padding: 10px;">
                         <input type="file" id="fileInput" style="display: none;" onchange="uploadFile()">
-                        <button class="btn-attach" onclick="document.getElementById('fileInput').click()">📎</button>
+                        <button class="btn-attach" onclick="document.getElementById('fileInput').click()">+</button>
                         <input type="text" id="messageInput" class="ui-input chat-input-field"
                                placeholder="Введите сообщение..." onkeypress="if(event.key === 'Enter') sendMessage()">
                         <button class="btn-primary" onclick="sendMessage()">Отправить</button>
@@ -179,6 +193,12 @@
         border-radius: 50%;
         display: flex; align-items: center; justify-content: center;
         font-weight: bold; color: var(--color-primary);
+        overflow: hidden; flex-shrink: 0;
+    }
+    .chat-item-avatar-img {
+        width: 100%; height: 100%;
+        object-fit: cover;
+        border-radius: 50%;
     }
 
     .chat-messages-area {
@@ -279,10 +299,38 @@
         font-size: 20px;
         cursor: pointer;
         transition: color 0.2s;
+        padding: 4px 8px;
+        border-radius: 4px;
     }
+    .btn-icon-settings:hover { color: var(--color-text); background: rgba(255,255,255,0.05); }
 
-        .btn-icon-settings:hover { color: var(--color-text);
+    .chat-menu-wrapper { position: relative; }
+    .chat-menu-dropdown {
+        display: none;
+        position: absolute;
+        right: 0; top: 100%;
+        z-index: 1000;
+        background: var(--color-panel);
+        border: 1px solid var(--color-border-subtle);
+        border-radius: 8px;
+        overflow: hidden;
+        min-width: 180px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     }
+    .chat-menu-dropdown.open { display: block; }
+    .chat-menu-dropdown button {
+        display: block;
+        width: 100%;
+        padding: 10px 16px;
+        background: none;
+        border: none;
+        color: var(--color-text);
+        cursor: pointer;
+        text-align: left;
+        font-size: 14px;
+        transition: background 0.12s;
+    }
+    .chat-menu-dropdown button:hover { background: rgba(255,255,255,0.08); }
 
     .btn-reply-action {
         background: none;
