@@ -918,11 +918,8 @@ def get_match_report(target_user_id):
 
         except Exception as e:
             current_app.logger.error(f"Error in match report generation: {e}")
-            fallback = generate_match_report(
-                current_user.id,
-                target_user_id,
-                db_sess,
-                matched_tags=matched_tags,
-                use_llm=False,
+            fallback_text = (
+                "У вас и пользователя есть пересекающиеся интересы. "
+                "Общие темы и схожие увлечения создают хорошую основу для общения."
             )
-            return jsonify({"report": fallback, "cached": False, "fallback": True})
+            return jsonify({"report": fallback_text, "cached": False, "fallback": True})

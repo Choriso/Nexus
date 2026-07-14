@@ -429,12 +429,16 @@ def generate_match_report(
         profile_a, profile_b, interests_a, interests_b, matched_tags
     )
 
-    prompt = _build_prompt_payload(
-        profile_a, profile_b, interests_a, interests_b,
-        user_a_schwartz=schwartz_a, user_b_schwartz=schwartz_b,
-        user_a_behavior=behavior_a, user_b_behavior=behavior_b,
-        matched_tags=matched_tags,
-    )
+    try:
+        prompt = _build_prompt_payload(
+            profile_a, profile_b, interests_a, interests_b,
+            user_a_schwartz=schwartz_a, user_b_schwartz=schwartz_b,
+            user_a_behavior=behavior_a, user_b_behavior=behavior_b,
+            matched_tags=matched_tags,
+        )
+    except Exception as e:
+        logger.error("Prompt build failed, using fallback: %s", e)
+        return fallback
 
     if config.YANDEX_GPT_API_KEY:
         try:
