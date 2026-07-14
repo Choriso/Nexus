@@ -152,7 +152,7 @@ class Config:
     )
 
     # Настройки Redis/Кэша
-    REDIS_URL: str = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    REDIS_URL: str = os.environ.get("REDIS_URL", "redis://redis:6379/1")
     CACHE_TYPE: str = "RedisCache"
     CACHE_REDIS_URL: str = REDIS_URL
     CACHE_DEFAULT_TIMEOUT: int = 3600

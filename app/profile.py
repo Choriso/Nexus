@@ -23,7 +23,7 @@ from sqlalchemy.orm import joinedload
 
 logger = logging.getLogger(__name__)
 
-REDIS_CACHE_URL = getattr(config, 'REDIS_CACHE_URL', 'redis://localhost:6379/1')
+REDIS_CACHE_URL = getattr(config, 'REDIS_CACHE_URL', 'redis://redis:6379/1')
 cache_redis = redis.from_url(REDIS_CACHE_URL, decode_responses=True)
 
 profile_bp = Blueprint("profile", __name__)
