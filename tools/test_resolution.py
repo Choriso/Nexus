@@ -135,7 +135,9 @@ def test_user_weights(sess, user_id: int):
 def main():
     print_header("ДИАГНОСТИКА РАЗРЕШЕНИЯ ТЕГОВ")
     print(f"YandexGPT API KEY: {'✓' if config.YANDEX_GPT_API_KEY else '✗'}")
+    print(f"DB URI: {config.SQLALCHEMY_DATABASE_URI}")
 
+    db_session.global_init(config.SQLALCHEMY_DATABASE_URI)
     sess = db_session.create_session()
     try:
         enricher = get_tag_enricher()
